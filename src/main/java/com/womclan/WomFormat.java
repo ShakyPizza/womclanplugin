@@ -216,4 +216,52 @@ final class WomFormat
 				return "Loading " + noun + "…";
 		}
 	}
+
+	/**
+	 * The label for a manual refresh control. The wait goes on the control itself because Swing
+	 * hides tooltips on disabled components, and an enabled-looking button that refuses to refresh
+	 * is worse than a labelled wait.
+	 */
+	static String syncButtonText(WomSyncStatus status, String idleText)
+	{
+		if (status.isFetching())
+		{
+			return "Syncing…";
+		}
+		return status.getCooldownRemainingMs() > 0
+			? idleText + " in " + countdown(status.getCooldownRemainingMs())
+			: idleText;
+	}
+
+	/**
+	 * One line describing the refresh state, shared by every surface so they cannot disagree about
+	 * how fresh the data is.
+	 *
+	 * @param hasData whether there is loaded data still on screen behind a failure
+	 */
+	static String syncSummary(WomSyncStatus status, boolean hasData, long nowMs)
+	{
+		if (status.isFetching())
+		{
+			return "Syncing…";
+		}
+
+		switch (status.getOutcome())
+		{
+			case NOT_CONFIGURED:
+				return "Set your Group ID in settings";
+			case FAILURE:
+				if (hasData && status.hasSucceeded())
+				{
+					return "Sync failed · showing data " + since(status.getLastSuccessMs(), nowMs);
+				}
+				return status.getCooldownRemainingMs() > 0
+					? "Sync failed · retry in " + countdown(status.getCooldownRemainingMs())
+					: "Sync failed · retry available";
+			case SUCCESS:
+				return "Synced " + since(status.getLastSuccessMs(), nowMs);
+			default:
+				return "Not synced yet";
+		}
+	}
 }

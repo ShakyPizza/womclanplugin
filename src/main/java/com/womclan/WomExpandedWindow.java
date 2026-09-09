@@ -26,6 +26,8 @@ import java.util.regex.Pattern;
 class WomExpandedWindow extends JFrame
 {
 	private static final NumberFormat INTEGER_FORMAT = NumberFormat.getIntegerInstance(Locale.US);
+	private static final String WINDOW_TITLE = "WiseOldMan Clan Stats";
+	private static final int SYNC_REFRESH_MS = 1_000;
 	private static final int ACHIEVEMENT_DETAIL_COLUMN = 3;
 	private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 		.withZone(ZoneId.systemDefault());
@@ -39,9 +41,20 @@ class WomExpandedWindow extends JFrame
 	private final JLabel activityStatusLabel = createStatusLabel();
 	private final JLabel nameChangeStatusLabel = createStatusLabel();
 
-	WomExpandedWindow()
+	private final WomClanPlugin plugin;
+	private final JLabel clanLabel = new JLabel();
+	private final JLabel syncLabel = new JLabel();
+	private final JButton refreshButton = new JButton();
+
+	/** Keeps the header's elapsed time and cooldown honest while the window sits open. */
+	private final Timer syncTimer;
+
+	private boolean hasData;
+
+	WomExpandedWindow(WomClanPlugin plugin)
 	{
-		super("WiseOldMan Clan Stats");
+		super(WINDOW_TITLE);
+		this.plugin = plugin;
 		setSize(850, 560);
 		setMinimumSize(new Dimension(620, 380));
 		setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
@@ -68,17 +81,27 @@ class WomExpandedWindow extends JFrame
 		tabs.addTab("Achievements", buildAchievementTab());
 		tabs.addTab("Activity", buildActivityTab());
 		tabs.addTab("Name Changes", buildNameChangeTab());
+		add(buildHeader(), BorderLayout.NORTH);
 		add(tabs, BorderLayout.CENTER);
 
-		clearTables();
+		setClanData(null);
+
+		syncTimer = new Timer(SYNC_REFRESH_MS, e -> refreshSyncStatus());
 	}
 
 	/**
 	 * Replaces the window's contents. A null {@code data} empties every table, which is what a group
 	 * change needs: the previous group's rows must never sit under the new group's name.
+	 *
+	 * <p>Only the table rows are replaced, so the selected tab, the active search filter and the
+	 * user's chosen column sort all survive a refresh.</p>
 	 */
 	void setClanData(WomClanData data)
 	{
+		hasData = data != null;
+		updateHeader(data == null ? null : data.getInfo());
+		refreshSyncStatus();
+
 		if (data == null)
 		{
 			clearTables();
@@ -171,6 +194,81 @@ class WomExpandedWindow extends JFrame
 		JLabel label = new JLabel();
 		label.setBorder(BorderFactory.createEmptyBorder(0, 8, 6, 8));
 		return label;
+	}
+
+	/**
+	 * A compact bar shared by every tab: which clan is on screen, how fresh it is, and one refresh
+	 * that goes through the plugin's cooldown rather than inventing a second one.
+	 */
+	private JPanel buildHeader()
+	{
+		clanLabel.setFont(FontManager.getRunescapeBoldFont());
+
+		syncLabel.setHorizontalAlignment(SwingConstants.RIGHT);
+		syncLabel.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
+
+		refreshButton.setFocusPainted(false);
+		refreshButton.addActionListener(e ->
+		{
+			plugin.requestManualSync();
+			refreshSyncStatus();
+		});
+
+		JPanel header = new JPanel(new BorderLayout(8, 0));
+		header.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+		header.add(clanLabel, BorderLayout.WEST);
+		header.add(syncLabel, BorderLayout.CENTER);
+		header.add(refreshButton, BorderLayout.EAST);
+		return header;
+	}
+
+	private void updateHeader(WomClanInfo info)
+	{
+		if (info == null)
+		{
+			setTitle(WINDOW_TITLE);
+			clanLabel.setText("No clan loaded");
+			return;
+		}
+
+		int members = info.getMemberCount();
+		setTitle(WINDOW_TITLE + " — " + info.getName());
+		clanLabel.setText(info.getName() + "  ·  " + WomFormat.integer(members) + (members == 1 ? " member" : " members"));
+	}
+
+	/** Redraws the header's freshness line and refresh button from the plugin's shared sync state. */
+	private void refreshSyncStatus()
+	{
+		WomSyncStatus status = plugin.syncStatus();
+		syncLabel.setText(WomFormat.syncSummary(status, hasData, System.currentTimeMillis()));
+		syncLabel.setToolTipText(status.hasSucceeded()
+			? "Last successful sync: " + WomFormat.timestamp(status.getLastSuccessMs())
+			: null);
+		refreshButton.setEnabled(status.isManualSyncAllowed());
+		refreshButton.setText(WomFormat.syncButtonText(status, "Refresh"));
+	}
+
+	@Override
+	public void setVisible(boolean visible)
+	{
+		super.setVisible(visible);
+
+		if (visible)
+		{
+			refreshSyncStatus();
+			syncTimer.start();
+		}
+		else
+		{
+			syncTimer.stop();
+		}
+	}
+
+	@Override
+	public void dispose()
+	{
+		syncTimer.stop();
+		super.dispose();
 	}
 
 	private JPanel buildMembersTab(JTable memberTable)

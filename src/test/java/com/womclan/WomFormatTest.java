@@ -138,4 +138,41 @@ public class WomFormatTest
 		assertEquals("Showing 1,200 recent achievements.",
 			WomFormat.historyStatus(WomHistory.Status.LOADED, 1200, "achievements"));
 	}
+
+	private static WomSyncStatus status(WomSyncState.Outcome outcome, boolean fetching, long lastSuccessMs, long cooldownMs)
+	{
+		return new WomSyncStatus(outcome, fetching, null, lastSuccessMs, cooldownMs);
+	}
+
+	@Test
+	public void syncButtonTextCarriesTheWaitOnTheControl()
+	{
+		assertEquals("Syncing…", WomFormat.syncButtonText(status(WomSyncState.Outcome.SUCCESS, true, 1, 0), "Sync Now"));
+		assertEquals("Sync Now", WomFormat.syncButtonText(status(WomSyncState.Outcome.SUCCESS, false, 1, 0), "Sync Now"));
+		assertEquals("Refresh in 4:32",
+			WomFormat.syncButtonText(status(WomSyncState.Outcome.SUCCESS, false, 1, 271_500), "Refresh"));
+	}
+
+	@Test
+	public void syncSummaryReportsFreshness()
+	{
+		long now = utc(2026, 9, 9, 14, 30);
+		assertEquals("Not synced yet", WomFormat.syncSummary(status(WomSyncState.Outcome.NEVER, false, 0, 0), false, now));
+		assertEquals("Syncing…", WomFormat.syncSummary(status(WomSyncState.Outcome.NEVER, true, 0, 0), false, now));
+		assertEquals("Synced 5 mins ago",
+			WomFormat.syncSummary(status(WomSyncState.Outcome.SUCCESS, false, now - 5 * 60_000, 0), true, now));
+		assertEquals("Set your Group ID in settings",
+			WomFormat.syncSummary(status(WomSyncState.Outcome.NOT_CONFIGURED, false, 0, 0), false, now));
+	}
+
+	@Test
+	public void syncSummaryMarksRetainedDataAsStale()
+	{
+		long now = utc(2026, 9, 9, 14, 30);
+		WomSyncStatus failed = status(WomSyncState.Outcome.FAILURE, false, now - 12 * 60_000, 240_000);
+
+		assertEquals("Sync failed · showing data 12 mins ago", WomFormat.syncSummary(failed, true, now));
+		assertEquals("a first-load failure has nothing to keep, so it says when to retry instead",
+			"Sync failed · retry in 4:00", WomFormat.syncSummary(failed, false, now));
+	}
 }

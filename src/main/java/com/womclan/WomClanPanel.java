@@ -199,45 +199,6 @@ class WomClanPanel extends PluginPanel
 			new EmptyBorder(4, 10, 4, 10)));
 	}
 
-	private String describeSyncButton(WomSyncStatus status)
-	{
-		if (status.isFetching())
-		{
-			return "Syncing…";
-		}
-		// The countdown lives on the button because Swing hides tooltips on disabled components,
-		// and an enabled-looking button that refuses to sync is worse than a labelled wait.
-		return status.getCooldownRemainingMs() > 0
-			? "Sync in " + WomFormat.countdown(status.getCooldownRemainingMs())
-			: "Sync Now";
-	}
-
-	private String describeStatus(WomSyncStatus status, long now)
-	{
-		if (status.isFetching())
-		{
-			return "Syncing…";
-		}
-
-		switch (status.getOutcome())
-		{
-			case NOT_CONFIGURED:
-				return "Set your Group ID in settings";
-			case FAILURE:
-				if (currentData != null && status.hasSucceeded())
-				{
-					return "Sync failed · showing data " + WomFormat.since(status.getLastSuccessMs(), now);
-				}
-				return status.getCooldownRemainingMs() > 0
-					? "Sync failed · retry in " + WomFormat.countdown(status.getCooldownRemainingMs())
-					: "Sync failed · retry available";
-			case SUCCESS:
-				return "Synced " + WomFormat.since(status.getLastSuccessMs(), now);
-			default:
-				return "Not synced yet";
-		}
-	}
-
 	private JLabel createClanStatLabel()
 	{
 		JLabel label = new JLabel();
@@ -299,9 +260,9 @@ class WomClanPanel extends PluginPanel
 		long now = System.currentTimeMillis();
 
 		syncButton.setEnabled(status.isManualSyncAllowed());
-		syncButton.setText(describeSyncButton(status));
+		syncButton.setText(WomFormat.syncButtonText(status, "Sync Now"));
 
-		statusLabel.setText(describeStatus(status, now));
+		statusLabel.setText(WomFormat.syncSummary(status, currentData != null, now));
 		statusLabel.setToolTipText(status.hasSucceeded()
 			? "Last successful sync: " + WomFormat.timestamp(status.getLastSuccessMs())
 			: null);
@@ -338,7 +299,7 @@ class WomClanPanel extends PluginPanel
 	{
 		if (expandedWindow == null || !expandedWindow.isDisplayable())
 		{
-			expandedWindow = new WomExpandedWindow();
+			expandedWindow = new WomExpandedWindow(plugin);
 		}
 		expandedWindow.setClanData(currentData);
 		expandedWindow.setVisible(true);
