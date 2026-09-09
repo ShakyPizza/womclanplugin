@@ -91,7 +91,7 @@ class WomExpandedWindow extends JFrame
 		// events by eye is a scan. Name changes match the old and new names too, since that is
 		// exactly what someone looking one up remembers.
 		achievementTab = new HistoryTab("achievements", achievementTableModel, ACHIEVEMENT_DETAIL_COLUMN, new int[]{1});
-		activityTab = new HistoryTab("activity", activityTableModel, -1, new int[]{1});
+		activityTab = new HistoryTab("activity entries", activityTableModel, -1, new int[]{1});
 		nameChangeTab = new HistoryTab("name changes", nameChangeTableModel, -1, new int[]{1, 2, 3});
 
 		JTabbedPane tabs = new JTabbedPane();
