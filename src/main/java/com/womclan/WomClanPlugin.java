@@ -93,6 +93,14 @@ public class WomClanPlugin extends Plugin
 			return;
 		}
 
+		// A different group invalidates everything on screen, including the "last synced" time:
+		// leaving the old clan's members visible under the new group's name would be a lie.
+		if ("groupId".equals(event.getKey()))
+		{
+			syncState.reset();
+			onPanel(WomClanPanel::clearClanData);
+		}
+
 		// Re-schedule whenever groupId or autoRefresh toggle changes
 		cancelAutoRefresh();
 		scheduleAutoRefresh();

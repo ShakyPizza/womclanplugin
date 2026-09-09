@@ -194,4 +194,26 @@ final class WomFormat
 	{
 		return timestampMs <= 0 ? "" : FULL_TIMESTAMP.format(Instant.ofEpochMilli(timestampMs).atZone(zone));
 	}
+
+	/**
+	 * Explains the state of a history section in one line, so an API failure never masquerades as a
+	 * clan with nothing going on.
+	 *
+	 * @param displayedRows rows actually on screen, which can be fewer than the fetched entries
+	 * @param noun          plural noun for the section, e.g. "name changes"
+	 */
+	static String historyStatus(WomHistory.Status status, int displayedRows, String noun)
+	{
+		switch (status)
+		{
+			case UNAVAILABLE:
+				return "Could not load " + noun + ".";
+			case LOADED:
+				return displayedRows == 0
+					? "No recent " + noun + "."
+					: "Showing " + integer(displayedRows) + " recent " + noun + ".";
+			default:
+				return "Loading " + noun + "…";
+		}
+	}
 }

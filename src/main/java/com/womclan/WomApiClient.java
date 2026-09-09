@@ -34,11 +34,12 @@ public class WomApiClient
 
 		log.debug("Fetched {} members for group {}", members.size(), groupId);
 		return new WomClanData(
+			groupId,
 			parseClanInfo(body, members),
 			members,
-			fetchAchievementsOrEmpty(groupId),
-			fetchActivityOrEmpty(groupId),
-			fetchNameChangesOrEmpty(groupId)
+			fetchHistory(groupId, "achievements", () -> fetchAchievements(groupId)),
+			fetchHistory(groupId, "activity", () -> fetchActivity(groupId)),
+			fetchHistory(groupId, "name changes", () -> fetchNameChanges(groupId))
 		);
 	}
 
@@ -94,43 +95,28 @@ public class WomApiClient
 		return nameChanges;
 	}
 
-	private List<WomAchievement> fetchAchievementsOrEmpty(int groupId)
+	/**
+	 * Runs one best-effort history fetch. These sections are optional — a member list is still worth
+	 * showing without them — but a failure is recorded rather than flattened into an empty list, so
+	 * the UI can tell "could not load" apart from "nothing happened recently".
+	 */
+	private <T> WomHistory<T> fetchHistory(int groupId, String noun, HistoryFetch<T> fetch)
 	{
 		try
 		{
-			return fetchAchievements(groupId);
+			return WomHistory.loaded(fetch.run());
 		}
 		catch (IOException e)
 		{
-			log.warn("WOM Clan Stats: failed to fetch achievements for group {}: {}", groupId, e.getMessage());
-			return new ArrayList<>();
+			log.warn("WOM Clan Stats: failed to fetch {} for group {}: {}", noun, groupId, e.getMessage());
+			return WomHistory.unavailable(e.getMessage());
 		}
 	}
 
-	private List<WomGroupActivity> fetchActivityOrEmpty(int groupId)
+	@FunctionalInterface
+	private interface HistoryFetch<T>
 	{
-		try
-		{
-			return fetchActivity(groupId);
-		}
-		catch (IOException e)
-		{
-			log.warn("WOM Clan Stats: failed to fetch activity for group {}: {}", groupId, e.getMessage());
-			return new ArrayList<>();
-		}
-	}
-
-	private List<WomNameChange> fetchNameChangesOrEmpty(int groupId)
-	{
-		try
-		{
-			return fetchNameChanges(groupId);
-		}
-		catch (IOException e)
-		{
-			log.warn("WOM Clan Stats: failed to fetch name changes for group {}: {}", groupId, e.getMessage());
-			return new ArrayList<>();
-		}
+		List<T> run() throws IOException;
 	}
 
 	static List<WomMember> parseMembers(String body) throws IOException

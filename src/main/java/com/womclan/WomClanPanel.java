@@ -39,10 +39,9 @@ class WomClanPanel extends PluginPanel
 	private final JTextField searchField;
 	private final JPanel memberListPanel;
 
+	/** The last successfully fetched data, kept so a failed refresh does not blank the panel. */
+	private WomClanData currentData;
 	private List<WomMember> allMembers = new ArrayList<>();
-	private List<WomAchievement> allAchievements = new ArrayList<>();
-	private List<WomGroupActivity> allActivity = new ArrayList<>();
-	private List<WomNameChange> allNameChanges = new ArrayList<>();
 
 	/** Repaints the elapsed-time and cooldown text so it stays true between fetches. */
 	private final Timer statusTimer;
@@ -225,6 +224,10 @@ class WomClanPanel extends PluginPanel
 			case NOT_CONFIGURED:
 				return "Set your Group ID in settings";
 			case FAILURE:
+				if (currentData != null && status.hasSucceeded())
+				{
+					return "Sync failed · showing data " + WomFormat.since(status.getLastSuccessMs(), now);
+				}
 				return status.getCooldownRemainingMs() > 0
 					? "Sync failed · retry in " + WomFormat.countdown(status.getCooldownRemainingMs())
 					: "Sync failed · retry available";
@@ -252,18 +255,10 @@ class WomClanPanel extends PluginPanel
 	// ── Public API called by WomClanPlugin ─────────────────────────────────────
 
 	/** Called on the EDT after a successful fetch. */
-	void updateMembers(List<WomMember> members)
-	{
-		updateClanData(new WomClanData(buildClanInfo(null, members), members, new ArrayList<>(), new ArrayList<>(), new ArrayList<>()));
-	}
-
-	/** Called on the EDT after a successful fetch. */
 	void updateClanData(WomClanData clanData)
 	{
+		currentData = clanData;
 		allMembers = new ArrayList<>(clanData.getMembers());
-		allAchievements = new ArrayList<>(clanData.getAchievements());
-		allActivity = new ArrayList<>(clanData.getActivity());
-		allNameChanges = new ArrayList<>(clanData.getNameChanges());
 		allMembers.sort(Comparator.comparingLong(WomMember::getTotalXp).reversed());
 		updateClanInfo(clanData.getInfo() == null ? buildClanInfo(null, allMembers) : clanData.getInfo());
 		refreshSyncStatus();
@@ -271,7 +266,26 @@ class WomClanPanel extends PluginPanel
 
 		if (expandedWindow != null && expandedWindow.isVisible())
 		{
-			expandedWindow.setClanData(allMembers, allAchievements, allActivity, allNameChanges);
+			expandedWindow.setClanData(currentData);
+		}
+	}
+
+	/**
+	 * Drops everything on screen. Called when the configured group changes, so the previous clan's
+	 * members are never presented as belonging to the newly selected one.
+	 */
+	void clearClanData()
+	{
+		currentData = null;
+		allMembers = new ArrayList<>();
+		searchField.setText("");
+		updateClanInfo(null);
+		refreshSyncStatus();
+		filterMembers();
+
+		if (expandedWindow != null)
+		{
+			expandedWindow.setClanData(null);
 		}
 	}
 
@@ -293,12 +307,20 @@ class WomClanPanel extends PluginPanel
 			: null);
 	}
 
-	/** Shows an error state in the panel (call via SwingUtilities.invokeLater). */
+	/**
+	 * Reports a failed fetch (call via SwingUtilities.invokeLater). Data already on screen survives:
+	 * a clan list that is a few minutes stale beats an error page where the clan list used to be.
+	 * The status line says how old it is.
+	 */
 	void showError(String msg)
 	{
 		refreshSyncStatus();
-		updateClanInfo(null);
-		showPlaceholder("Error: " + msg + "\n\nCheck your Group ID and connection.");
+
+		if (currentData == null)
+		{
+			updateClanInfo(null);
+			showPlaceholder("Could not load clan data.\n\n" + msg + "\n\nCheck your Group ID and connection, then sync again.");
+		}
 	}
 
 	void shutdown()
@@ -318,7 +340,7 @@ class WomClanPanel extends PluginPanel
 		{
 			expandedWindow = new WomExpandedWindow();
 		}
-		expandedWindow.setClanData(allMembers, allAchievements, allActivity, allNameChanges);
+		expandedWindow.setClanData(currentData);
 		expandedWindow.setVisible(true);
 		expandedWindow.toFront();
 	}

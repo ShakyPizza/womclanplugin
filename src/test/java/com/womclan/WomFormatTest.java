@@ -125,4 +125,17 @@ public class WomFormatTest
 		assertEquals("2026-09-09 14:30:00", WomFormat.timestamp(utc(2026, 9, 9, 14, 30), UTC));
 		assertEquals("", WomFormat.timestamp(0, UTC));
 	}
+
+	@Test
+	public void historyStatusSeparatesEmptyFromUnavailable()
+	{
+		assertEquals("No recent name changes.",
+			WomFormat.historyStatus(WomHistory.Status.LOADED, 0, "name changes"));
+		assertEquals("Could not load name changes.",
+			WomFormat.historyStatus(WomHistory.Status.UNAVAILABLE, 0, "name changes"));
+		assertEquals("Loading name changes…",
+			WomFormat.historyStatus(WomHistory.Status.PENDING, 0, "name changes"));
+		assertEquals("Showing 1,200 recent achievements.",
+			WomFormat.historyStatus(WomHistory.Status.LOADED, 1200, "achievements"));
+	}
 }

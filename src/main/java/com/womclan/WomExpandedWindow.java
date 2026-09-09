@@ -35,6 +35,9 @@ class WomExpandedWindow extends JFrame
 	private final DefaultTableModel activityTableModel;
 	private final DefaultTableModel nameChangeTableModel;
 	private final TableRowSorter<DefaultTableModel> memberSorter;
+	private final JLabel achievementStatusLabel = createStatusLabel();
+	private final JLabel activityStatusLabel = createStatusLabel();
+	private final JLabel nameChangeStatusLabel = createStatusLabel();
 
 	WomExpandedWindow()
 	{
@@ -66,23 +69,24 @@ class WomExpandedWindow extends JFrame
 		tabs.addTab("Activity", buildActivityTab());
 		tabs.addTab("Name Changes", buildNameChangeTab());
 		add(tabs, BorderLayout.CENTER);
+
+		clearTables();
 	}
 
-	/** Replaces the table contents with the given member list. */
-	void setMembers(List<WomMember> members)
+	/**
+	 * Replaces the window's contents. A null {@code data} empties every table, which is what a group
+	 * change needs: the previous group's rows must never sit under the new group's name.
+	 */
+	void setClanData(WomClanData data)
 	{
-		setClanData(members, new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
-	}
+		if (data == null)
+		{
+			clearTables();
+			return;
+		}
 
-	void setClanData(List<WomMember> members, List<WomAchievement> achievements, List<WomGroupActivity> activity)
-	{
-		setClanData(members, achievements, activity, new ArrayList<>());
-	}
-
-	void setClanData(List<WomMember> members, List<WomAchievement> achievements, List<WomGroupActivity> activity, List<WomNameChange> nameChanges)
-	{
 		memberTableModel.setRowCount(0);
-		List<WomMember> sortedMembers = new ArrayList<>(members);
+		List<WomMember> sortedMembers = new ArrayList<>(data.getMembers());
 		sortedMembers.sort(Comparator.comparingDouble(WomMember::getEhb).reversed());
 		for (int i = 0; i < sortedMembers.size(); i++)
 		{
@@ -97,8 +101,9 @@ class WomExpandedWindow extends JFrame
 			});
 		}
 
+		WomHistory<WomAchievement> achievements = data.getAchievements();
 		achievementTableModel.setRowCount(0);
-		for (WomAchievement achievement : achievements)
+		for (WomAchievement achievement : achievements.getEntries())
 		{
 			achievementTableModel.addRow(new Object[]{
 				formatInstant(achievement.getCreatedAt()),
@@ -108,8 +113,9 @@ class WomExpandedWindow extends JFrame
 			});
 		}
 
+		WomHistory<WomGroupActivity> activity = data.getActivity();
 		activityTableModel.setRowCount(0);
-		for (WomGroupActivity entry : activity)
+		for (WomGroupActivity entry : activity.getEntries())
 		{
 			if (!entry.isMembershipChange())
 			{
@@ -124,8 +130,9 @@ class WomExpandedWindow extends JFrame
 			});
 		}
 
+		WomHistory<WomNameChange> nameChanges = data.getNameChanges();
 		nameChangeTableModel.setRowCount(0);
-		for (WomNameChange nameChange : nameChanges)
+		for (WomNameChange nameChange : nameChanges.getEntries())
 		{
 			nameChangeTableModel.addRow(new Object[]{
 				formatInstant(nameChange.getResolvedAt() == null ? nameChange.getCreatedAt() : nameChange.getResolvedAt()),
@@ -135,6 +142,35 @@ class WomExpandedWindow extends JFrame
 				formatNameChangeStatus(nameChange.getStatus())
 			});
 		}
+
+		// Row counts rather than entry counts: the activity tab shows only membership changes.
+		applyHistoryStatus(achievementStatusLabel, achievements, achievementTableModel.getRowCount(), "achievements");
+		applyHistoryStatus(activityStatusLabel, activity, activityTableModel.getRowCount(), "activity");
+		applyHistoryStatus(nameChangeStatusLabel, nameChanges, nameChangeTableModel.getRowCount(), "name changes");
+	}
+
+	private void clearTables()
+	{
+		memberTableModel.setRowCount(0);
+		achievementTableModel.setRowCount(0);
+		activityTableModel.setRowCount(0);
+		nameChangeTableModel.setRowCount(0);
+		applyHistoryStatus(achievementStatusLabel, WomHistory.pending(), 0, "achievements");
+		applyHistoryStatus(activityStatusLabel, WomHistory.pending(), 0, "activity");
+		applyHistoryStatus(nameChangeStatusLabel, WomHistory.pending(), 0, "name changes");
+	}
+
+	private void applyHistoryStatus(JLabel label, WomHistory<?> history, int displayedRows, String noun)
+	{
+		label.setText(WomFormat.historyStatus(history.getStatus(), displayedRows, noun));
+		label.setToolTipText(history.getError());
+	}
+
+	private static JLabel createStatusLabel()
+	{
+		JLabel label = new JLabel();
+		label.setBorder(BorderFactory.createEmptyBorder(0, 8, 6, 8));
+		return label;
 	}
 
 	private JPanel buildMembersTab(JTable memberTable)
@@ -177,7 +213,7 @@ class WomExpandedWindow extends JFrame
 		activityTable.getColumnModel().getColumn(3).setPreferredWidth(110);
 
 		JPanel panel = new JPanel(new BorderLayout(0, 0));
-		panel.add(wrapTable("Recent Activity", activityTable), BorderLayout.CENTER);
+		panel.add(wrapTable("Recent Activity", activityTable, activityStatusLabel), BorderLayout.CENTER);
 		return panel;
 	}
 
@@ -194,7 +230,7 @@ class WomExpandedWindow extends JFrame
 		achievementTable.getColumnModel().getColumn(2).setPreferredWidth(330);
 
 		JPanel panel = new JPanel(new BorderLayout(0, 0));
-		panel.add(wrapTable("Recent Achievements", achievementTable), BorderLayout.CENTER);
+		panel.add(wrapTable("Recent Achievements", achievementTable, achievementStatusLabel), BorderLayout.CENTER);
 		return panel;
 	}
 
@@ -209,18 +245,22 @@ class WomExpandedWindow extends JFrame
 		nameChangeTable.getColumnModel().getColumn(4).setPreferredWidth(90);
 
 		JPanel panel = new JPanel(new BorderLayout(0, 0));
-		panel.add(wrapTable("Recent Name Changes", nameChangeTable), BorderLayout.CENTER);
+		panel.add(wrapTable("Recent Name Changes", nameChangeTable, nameChangeStatusLabel), BorderLayout.CENTER);
 		return panel;
 	}
 
-	private JPanel wrapTable(String title, JTable table)
+	private JPanel wrapTable(String title, JTable table, JLabel statusLabel)
 	{
 		JLabel label = new JLabel(title);
 		label.setFont(FontManager.getRunescapeBoldFont());
-		label.setBorder(BorderFactory.createEmptyBorder(8, 8, 6, 8));
+		label.setBorder(BorderFactory.createEmptyBorder(8, 8, 2, 8));
+
+		JPanel heading = new JPanel(new BorderLayout(0, 0));
+		heading.add(label, BorderLayout.NORTH);
+		heading.add(statusLabel, BorderLayout.SOUTH);
 
 		JPanel panel = new JPanel(new BorderLayout(0, 0));
-		panel.add(label, BorderLayout.NORTH);
+		panel.add(heading, BorderLayout.NORTH);
 		panel.add(new JScrollPane(table), BorderLayout.CENTER);
 		return panel;
 	}
