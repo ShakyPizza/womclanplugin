@@ -3,6 +3,7 @@ package com.womclan;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.PluginPanel;
+import net.runelite.client.util.LinkBrowser;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -20,6 +21,11 @@ import java.util.Locale;
  */
 class WomClanPanel extends PluginPanel
 {
+	private static final String SETUP_CARD = "setup";
+	private static final String CLAN_CARD = "clan";
+	private static final String WOM_GROUPS_URL = "https://wiseoldman.net/groups";
+	/** Width hint for wrapped HTML text: without it a label reports a single-line preferred size. */
+	private static final String WRAP_STYLE = "<html><body style='width:160px'>";
 	private static final WomMemberSort DEFAULT_SORT = WomMemberSort.TOTAL_XP;
 	private static final int STATUS_REFRESH_MS = 1_000;
 	private static final int SCROLLBAR_WIDTH = 8;
@@ -36,6 +42,11 @@ class WomClanPanel extends PluginPanel
 	private final JLabel totalEhpLabel;
 	private final JLabel totalEhbLabel;
 	private final JButton syncButton;
+	private final JButton detailsButton;
+	private final CardLayout cards = new CardLayout();
+	private final JPanel cardHolder = new JPanel(cards);
+	private final JTextField groupIdField = new JTextField();
+	private final JLabel setupErrorLabel = new JLabel();
 	private final JComboBox<WomMemberSort> sortCombo;
 	private final JTextField searchField;
 	private final JPanel memberListPanel;
@@ -71,17 +82,17 @@ class WomClanPanel extends PluginPanel
 		statusLabel.setHorizontalAlignment(SwingConstants.CENTER);
 		statusLabel.setBorder(new EmptyBorder(6, 0, 0, 0));
 
-		JButton expandButton = new JButton("Open GUI");
-		expandButton.setFont(FontManager.getRunescapeSmallFont());
-		expandButton.setFocusPainted(false);
-		styleHeaderButton(expandButton);
-		expandButton.setToolTipText("Open GUI in a separate window");
-		expandButton.addActionListener(e -> openExpandedWindow());
+		detailsButton = new JButton("Open GUI");
+		detailsButton.setFont(FontManager.getRunescapeSmallFont());
+		detailsButton.setFocusPainted(false);
+		styleHeaderButton(detailsButton);
+		detailsButton.setToolTipText("Open GUI in a separate window");
+		detailsButton.addActionListener(e -> openExpandedWindow());
 
 		JPanel buttonRow = new JPanel(new GridLayout(1, 2, 8, 0));
 		buttonRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		buttonRow.add(syncButton);
-		buttonRow.add(expandButton);
+		buttonRow.add(detailsButton);
 
 		JPanel topBar = new JPanel(new BorderLayout());
 		topBar.setBackground(ColorScheme.DARKER_GRAY_COLOR);
@@ -187,7 +198,9 @@ class WomClanPanel extends PluginPanel
 		headerPanel.add(clanInfoPanel, BorderLayout.CENTER);
 		headerPanel.add(listControls, BorderLayout.SOUTH);
 
-		add(headerPanel, BorderLayout.NORTH);
+		JPanel clanCard = new JPanel(new BorderLayout(0, 0));
+		clanCard.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		clanCard.add(headerPanel, BorderLayout.NORTH);
 
 		// ── Member list ────────────────────────────────────────────────────────
 		memberListPanel = new JPanel();
@@ -202,13 +215,143 @@ class WomClanPanel extends PluginPanel
 		scrollPane.getVerticalScrollBar().setPreferredSize(new Dimension(SCROLLBAR_WIDTH, 0));
 		scrollPane.getVerticalScrollBar().setUnitIncrement(SCROLL_UNIT_INCREMENT);
 
-		add(scrollPane, BorderLayout.CENTER);
+		clanCard.add(scrollPane, BorderLayout.CENTER);
 
-		showPlaceholder("Set your WOM Group ID in the\nplugin config, then hit Sync Now.");
+		// Two states, not one panel with everything greyed out: with no group configured there is
+		// nothing to summarise, search or expand, and offering those controls only buries the one
+		// action that matters.
+		cardHolder.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		cardHolder.add(buildSetupCard(), SETUP_CARD);
+		cardHolder.add(clanCard, CLAN_CARD);
+		add(cardHolder, BorderLayout.CENTER);
+
+		setGroupConfigured(plugin.isGroupConfigured());
+		showPlaceholder("No data yet.\nHit Sync Now to load members.");
 
 		statusTimer = new Timer(STATUS_REFRESH_MS, e -> refreshSyncStatus());
 		statusTimer.start();
 		refreshSyncStatus();
+	}
+
+	/**
+	 * The state shown before a clan is chosen: what the plugin needs, where to find it, and a field
+	 * to enter it. RuneLite exposes no supported way for a Plugin Hub plugin to open another
+	 * plugin's settings panel, so the setting is offered here rather than pointed at.
+	 */
+	private JPanel buildSetupCard()
+	{
+		JLabel title = new JLabel("Connect your clan");
+		title.setFont(FontManager.getRunescapeBoldFont());
+		title.setForeground(Color.YELLOW);
+		title.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+		JLabel explanation = new JLabel(WRAP_STYLE + "This plugin reads your clan from Wise Old Man."
+			+ "<br><br>Open your clan on wiseoldman.net and copy the number from the address bar:"
+			+ "<br>wiseoldman.net/groups/<b>2300</b>"
+			+ "<br><br>You can change it again later in the plugin's settings.</body></html>");
+		explanation.setFont(FontManager.getRunescapeSmallFont());
+		explanation.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		explanation.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+		JLabel fieldLabel = new JLabel("WOM Group ID");
+		fieldLabel.setFont(FontManager.getRunescapeSmallFont());
+		fieldLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		fieldLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+		groupIdField.setFont(FontManager.getRunescapeSmallFont());
+		groupIdField.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		groupIdField.setForeground(Color.WHITE);
+		groupIdField.setCaretColor(Color.WHITE);
+		groupIdField.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createLineBorder(ColorScheme.MEDIUM_GRAY_COLOR),
+			new EmptyBorder(4, 6, 4, 6)));
+		groupIdField.setAlignmentX(Component.LEFT_ALIGNMENT);
+		groupIdField.addActionListener(e -> onConnectClicked());
+
+		setupErrorLabel.setFont(FontManager.getRunescapeSmallFont());
+		setupErrorLabel.setForeground(ColorScheme.PROGRESS_ERROR_COLOR);
+		setupErrorLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+		JButton connectButton = new JButton("Connect clan");
+		connectButton.setFont(FontManager.getRunescapeSmallFont());
+		connectButton.setFocusPainted(false);
+		styleHeaderButton(connectButton);
+		connectButton.setToolTipText("Save this group ID and load the clan");
+		connectButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+		connectButton.addActionListener(e -> onConnectClicked());
+
+		JButton findButton = new JButton("Find my group ID");
+		findButton.setFont(FontManager.getRunescapeSmallFont());
+		findButton.setFocusPainted(false);
+		styleHeaderButton(findButton);
+		findButton.setToolTipText("Open wiseoldman.net/groups in your browser");
+		findButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+		findButton.addActionListener(e -> LinkBrowser.browse(WOM_GROUPS_URL));
+
+		JPanel card = new JPanel();
+		card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
+		card.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		card.setBorder(new EmptyBorder(12, 10, 12, 10));
+		card.add(title);
+		card.add(Box.createVerticalStrut(8));
+		card.add(explanation);
+		card.add(Box.createVerticalStrut(12));
+		card.add(fieldLabel);
+		card.add(Box.createVerticalStrut(4));
+		card.add(groupIdField);
+		card.add(Box.createVerticalStrut(4));
+		card.add(setupErrorLabel);
+		card.add(Box.createVerticalStrut(8));
+		card.add(connectButton);
+		card.add(Box.createVerticalStrut(6));
+		card.add(findButton);
+		card.add(Box.createVerticalGlue());
+
+		// A text field in a BoxLayout would otherwise stretch to fill the column.
+		groupIdField.setMaximumSize(new Dimension(Integer.MAX_VALUE, groupIdField.getPreferredSize().height));
+
+		JPanel wrapper = new JPanel(new BorderLayout());
+		wrapper.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		wrapper.add(card, BorderLayout.NORTH);
+		return wrapper;
+	}
+
+	private void onConnectClicked()
+	{
+		int groupId = parseGroupId(groupIdField.getText().trim());
+
+		if (groupId <= 0)
+		{
+			setupErrorLabel.setText(WRAP_STYLE + "Enter the number from the wiseoldman.net/groups/… address.</body></html>");
+			return;
+		}
+
+		setupErrorLabel.setText("");
+		plugin.setGroupId(groupId);
+	}
+
+	private static int parseGroupId(String text)
+	{
+		try
+		{
+			return Integer.parseInt(text);
+		}
+		catch (NumberFormatException e)
+		{
+			return -1;
+		}
+	}
+
+	/** Switches between the setup state and the clan view. */
+	void setGroupConfigured(boolean configured)
+	{
+		cards.show(cardHolder, configured ? CLAN_CARD : SETUP_CARD);
+
+		if (!configured)
+		{
+			groupIdField.setText("");
+			setupErrorLabel.setText("");
+		}
 	}
 
 	// ── Sync button handler ────────────────────────────────────────────────────
@@ -290,6 +433,12 @@ class WomClanPanel extends PluginPanel
 		statusLabel.setToolTipText(status.hasSucceeded()
 			? "Last successful sync: " + WomFormat.timestamp(status.getLastSuccessMs())
 			: null);
+
+		// Nothing to expand into a details window until a fetch has actually produced something.
+		detailsButton.setEnabled(currentData != null);
+		detailsButton.setToolTipText(currentData == null
+			? "Sync the clan first — there is nothing to show yet"
+			: "Open GUI in a separate window");
 	}
 
 	/**
@@ -405,10 +554,7 @@ class WomClanPanel extends PluginPanel
 
 		if (members.isEmpty())
 		{
-			String msg = allMembers.isEmpty()
-				? "No data yet.\nHit Sync Now to load members."
-				: "No members match \"" + searchField.getText().trim() + "\".";
-			showPlaceholder(msg);
+			showPlaceholder(describeEmptyList());
 		}
 		else
 		{
@@ -422,6 +568,23 @@ class WomClanPanel extends PluginPanel
 
 		memberListPanel.revalidate();
 		memberListPanel.repaint();
+	}
+
+	/**
+	 * Distinguishes the three ways the list can come up empty. None of them is "no group
+	 * configured": that state never reaches this card.
+	 */
+	private String describeEmptyList()
+	{
+		if (currentData == null)
+		{
+			return "No data yet.\nHit Sync Now to load members.";
+		}
+		if (allMembers.isEmpty())
+		{
+			return "This clan has no members on\nWise Old Man yet.";
+		}
+		return "No members match \"" + searchField.getText().trim() + "\".";
 	}
 
 	private void showPlaceholder(String text)

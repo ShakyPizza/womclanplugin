@@ -40,6 +40,9 @@ public class WomClanPlugin extends Plugin
 	@Inject
 	private WomApiClient apiClient;
 
+	@Inject
+	private ConfigManager configManager;
+
 	private final WomSyncState syncState = new WomSyncState();
 
 	private volatile WomClanPanel panel;
@@ -95,15 +98,27 @@ public class WomClanPlugin extends Plugin
 
 		// A different group invalidates everything on screen, including the "last synced" time:
 		// leaving the old clan's members visible under the new group's name would be a lie.
-		if ("groupId".equals(event.getKey()))
+		boolean groupChanged = "groupId".equals(event.getKey());
+		if (groupChanged)
 		{
 			syncState.reset();
-			onPanel(WomClanPanel::clearClanData);
+			onPanel(panel ->
+			{
+				panel.clearClanData();
+				panel.setGroupConfigured(isGroupConfigured());
+			});
 		}
 
 		// Re-schedule whenever groupId or autoRefresh toggle changes
 		cancelAutoRefresh();
 		scheduleAutoRefresh();
+
+		// scheduleAutoRefresh fetches straight away when it is enabled. With it turned off, a group
+		// change still deserves one fetch, so setup does not hand back an empty panel.
+		if (groupChanged && isGroupConfigured() && !config.autoRefresh())
+		{
+			requestManualSync();
+		}
 	}
 
 	/**
@@ -121,6 +136,21 @@ public class WomClanPlugin extends Plugin
 		{
 			executor.submit(this::fetchAndUpdate);
 		}
+	}
+
+	boolean isGroupConfigured()
+	{
+		return config.groupId() > 0;
+	}
+
+	/**
+	 * Stores a group id chosen from the panel's setup state. Writing through ConfigManager keeps the
+	 * plugin's own settings the single source of truth, and the resulting ConfigChanged drives the
+	 * panel out of setup and into its first fetch.
+	 */
+	void setGroupId(int groupId)
+	{
+		configManager.setConfiguration("womclan", "groupId", groupId);
 	}
 
 	/** The current refresh state, shared by every surface that offers a refresh. */
