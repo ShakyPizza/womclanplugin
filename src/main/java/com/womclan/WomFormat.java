@@ -1,6 +1,10 @@
 package com.womclan;
 
 import java.text.NumberFormat;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 
 /**
@@ -18,6 +22,10 @@ final class WomFormat
 	 * carry an experience threshold while reporting a level measure.
 	 */
 	private static final long MAX_TOTAL_LEVEL = 2376L;
+
+	private static final DateTimeFormatter TIME_OF_DAY = DateTimeFormatter.ofPattern("HH:mm", Locale.US);
+	private static final DateTimeFormatter DATE_AND_TIME = DateTimeFormatter.ofPattern("d MMM HH:mm", Locale.US);
+	private static final DateTimeFormatter FULL_TIMESTAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.US);
 
 	private WomFormat()
 	{
@@ -134,5 +142,56 @@ final class WomFormat
 			return metric;
 		}
 		return metric + " — " + value;
+	}
+
+	/** Formats a remaining duration as {@code m:ss}, rounded up so it never reads 0:00 while waiting. */
+	static String countdown(long remainingMs)
+	{
+		long seconds = (Math.max(0, remainingMs) + 999) / 1_000;
+		return seconds / 60 + String.format(Locale.US, ":%02d", seconds % 60);
+	}
+
+	/**
+	 * Describes how long ago something happened, in a form that stays true as time passes:
+	 * an elapsed count while it is recent, an absolute clock time once "N mins ago" stops helping.
+	 */
+	static String since(long timestampMs, long nowMs)
+	{
+		return since(timestampMs, nowMs, ZoneId.systemDefault());
+	}
+
+	static String since(long timestampMs, long nowMs, ZoneId zone)
+	{
+		if (timestampMs <= 0)
+		{
+			return "never";
+		}
+
+		long minutes = Math.max(0, nowMs - timestampMs) / 60_000;
+		if (minutes < 1)
+		{
+			return "just now";
+		}
+		if (minutes < 60)
+		{
+			return minutes + (minutes == 1 ? " min ago" : " mins ago");
+		}
+
+		ZonedDateTime then = Instant.ofEpochMilli(timestampMs).atZone(zone);
+		ZonedDateTime now = Instant.ofEpochMilli(nowMs).atZone(zone);
+		return then.toLocalDate().equals(now.toLocalDate())
+			? "at " + TIME_OF_DAY.format(then)
+			: "on " + DATE_AND_TIME.format(then);
+	}
+
+	/** The unabbreviated timestamp, for tooltips where the exact value has to stay discoverable. */
+	static String timestamp(long timestampMs)
+	{
+		return timestamp(timestampMs, ZoneId.systemDefault());
+	}
+
+	static String timestamp(long timestampMs, ZoneId zone)
+	{
+		return timestampMs <= 0 ? "" : FULL_TIMESTAMP.format(Instant.ofEpochMilli(timestampMs).atZone(zone));
 	}
 }

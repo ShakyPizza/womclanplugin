@@ -15,6 +15,7 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.util.function.Consumer;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -39,7 +40,9 @@ public class WomClanPlugin extends Plugin
 	@Inject
 	private WomApiClient apiClient;
 
-	private WomClanPanel panel;
+	private final WomSyncState syncState = new WomSyncState();
+
+	private volatile WomClanPanel panel;
 	private NavigationButton navButton;
 	private ScheduledExecutorService executor;
 	private ScheduledFuture<?> autoRefreshTask;
@@ -95,13 +98,27 @@ public class WomClanPlugin extends Plugin
 		scheduleAutoRefresh();
 	}
 
-	/** Called by the panel's Sync Now button. */
-	void manualSync()
+	/**
+	 * Called by the panel's Sync Now button. Does nothing when a fetch is already running or the
+	 * manual cooldown has not elapsed; callers read {@link #syncStatus()} to explain why.
+	 */
+	void requestManualSync()
 	{
-		if (executor != null && !executor.isShutdown())
+		if (executor == null || executor.isShutdown())
+		{
+			return;
+		}
+
+		if (syncState.beginManualFetch(System.currentTimeMillis()))
 		{
 			executor.submit(this::fetchAndUpdate);
 		}
+	}
+
+	/** The current refresh state, shared by every surface that offers a refresh. */
+	WomSyncStatus syncStatus()
+	{
+		return syncState.snapshot(System.currentTimeMillis());
 	}
 
 	// ── Private helpers ────────────────────────────────────────────────────────
@@ -115,7 +132,7 @@ public class WomClanPlugin extends Plugin
 
 		// Fetch immediately on startup / config change, then every 60 min
 		autoRefreshTask = executor.scheduleAtFixedRate(
-			this::fetchAndUpdate,
+			this::autoFetch,
 			0, AUTO_REFRESH_MINUTES, TimeUnit.MINUTES
 		);
 	}
@@ -129,28 +146,54 @@ public class WomClanPlugin extends Plugin
 		}
 	}
 
+	private void autoFetch()
+	{
+		// A scheduled refresh that lands on top of a running one is simply skipped; it must not
+		// touch the manual cooldown either way.
+		if (syncState.beginAutoFetch())
+		{
+			fetchAndUpdate();
+		}
+	}
+
 	private void fetchAndUpdate()
 	{
 		int groupId = config.groupId();
 
 		if (groupId <= 0)
 		{
-			SwingUtilities.invokeLater(() -> panel.setSyncStatus("Set Group ID in config"));
+			syncState.recordNotConfigured();
+			onPanel(WomClanPanel::refreshSyncStatus);
 			return;
 		}
 
-		SwingUtilities.invokeLater(() -> panel.setSyncStatus("Syncing…"));
+		onPanel(WomClanPanel::refreshSyncStatus);
 
 		try
 		{
 			WomClanData clanData = apiClient.fetchClanData(groupId);
-			SwingUtilities.invokeLater(() -> panel.updateClanData(clanData));
+			syncState.recordSuccess(System.currentTimeMillis());
+			onPanel(p -> p.updateClanData(clanData));
 		}
 		catch (IOException e)
 		{
 			log.warn("WOM Clan Stats: failed to fetch group {}: {}", groupId, e.getMessage());
-			SwingUtilities.invokeLater(() -> panel.showError(e.getMessage()));
+			syncState.recordFailure(e.getMessage());
+			onPanel(p -> p.showError(e.getMessage()));
 		}
+	}
+
+	/** Runs a panel update on the EDT, skipping it if the plugin shut down in the meantime. */
+	private void onPanel(Consumer<WomClanPanel> action)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			WomClanPanel current = panel;
+			if (current != null)
+			{
+				action.accept(current);
+			}
+		});
 	}
 
 	/** Creates a small 16×16 icon programmatically (blue rounded square with "W"). */

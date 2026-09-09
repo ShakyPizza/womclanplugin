@@ -9,16 +9,11 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
-import java.awt.event.ActionEvent;
 import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Main sidebar panel for the WOM Clan Stats plugin.
@@ -26,7 +21,7 @@ import java.util.concurrent.TimeUnit;
  */
 class WomClanPanel extends PluginPanel
 {
-	private static final long COOLDOWN_MS = 5 * 60 * 1_000L;
+	private static final int STATUS_REFRESH_MS = 1_000;
 	private static final int SCROLLBAR_WIDTH = 8;
 	private static final int SCROLL_UNIT_INCREMENT = 16;
 	private static final NumberFormat INTEGER_FORMAT = NumberFormat.getIntegerInstance(Locale.US);
@@ -48,10 +43,9 @@ class WomClanPanel extends PluginPanel
 	private List<WomAchievement> allAchievements = new ArrayList<>();
 	private List<WomGroupActivity> allActivity = new ArrayList<>();
 	private List<WomNameChange> allNameChanges = new ArrayList<>();
-	private long lastManualSyncTime = 0;
 
-	private final ScheduledExecutorService cooldownExecutor = Executors.newSingleThreadScheduledExecutor();
-	private ScheduledFuture<?> cooldownTask;
+	/** Repaints the elapsed-time and cooldown text so it stays true between fetches. */
+	private final Timer statusTimer;
 
 	private WomExpandedWindow expandedWindow;
 
@@ -69,9 +63,9 @@ class WomClanPanel extends PluginPanel
 		syncButton.setFocusPainted(false);
 		styleHeaderButton(syncButton);
 		syncButton.setToolTipText("Fetch latest clan stats from WOM API");
-		syncButton.addActionListener(this::onSyncClicked);
+		syncButton.addActionListener(e -> onSyncClicked());
 
-		statusLabel = new JLabel("Not synced yet");
+		statusLabel = new JLabel();
 		statusLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		statusLabel.setFont(FontManager.getRunescapeSmallFont());
 		statusLabel.setHorizontalAlignment(SwingConstants.CENTER);
@@ -187,6 +181,10 @@ class WomClanPanel extends PluginPanel
 		add(scrollPane, BorderLayout.CENTER);
 
 		showPlaceholder("Set your WOM Group ID in the\nplugin config, then hit Sync Now.");
+
+		statusTimer = new Timer(STATUS_REFRESH_MS, e -> refreshSyncStatus());
+		statusTimer.start();
+		refreshSyncStatus();
 	}
 
 	// ── Sync button handler ────────────────────────────────────────────────────
@@ -202,6 +200,41 @@ class WomClanPanel extends PluginPanel
 			new EmptyBorder(4, 10, 4, 10)));
 	}
 
+	private String describeSyncButton(WomSyncStatus status)
+	{
+		if (status.isFetching())
+		{
+			return "Syncing…";
+		}
+		// The countdown lives on the button because Swing hides tooltips on disabled components,
+		// and an enabled-looking button that refuses to sync is worse than a labelled wait.
+		return status.getCooldownRemainingMs() > 0
+			? "Sync in " + WomFormat.countdown(status.getCooldownRemainingMs())
+			: "Sync Now";
+	}
+
+	private String describeStatus(WomSyncStatus status, long now)
+	{
+		if (status.isFetching())
+		{
+			return "Syncing…";
+		}
+
+		switch (status.getOutcome())
+		{
+			case NOT_CONFIGURED:
+				return "Set your Group ID in settings";
+			case FAILURE:
+				return status.getCooldownRemainingMs() > 0
+					? "Sync failed · retry in " + WomFormat.countdown(status.getCooldownRemainingMs())
+					: "Sync failed · retry available";
+			case SUCCESS:
+				return "Synced " + WomFormat.since(status.getLastSuccessMs(), now);
+			default:
+				return "Not synced yet";
+		}
+	}
+
 	private JLabel createClanStatLabel()
 	{
 		JLabel label = new JLabel();
@@ -210,56 +243,10 @@ class WomClanPanel extends PluginPanel
 		return label;
 	}
 
-	private void onSyncClicked(ActionEvent e)
+	private void onSyncClicked()
 	{
-		long now = System.currentTimeMillis();
-		long elapsed = now - lastManualSyncTime;
-
-		if (elapsed < COOLDOWN_MS)
-		{
-			long remaining = (COOLDOWN_MS - elapsed) / 1_000;
-			syncButton.setText("Wait " + remaining + "s");
-			return;
-		}
-
-		lastManualSyncTime = now;
-		syncButton.setEnabled(false);
-		syncButton.setText("Syncing…");
-		plugin.manualSync();
-		startCooldownTimer();
-	}
-
-	private void startCooldownTimer()
-	{
-		if (cooldownTask != null)
-		{
-			cooldownTask.cancel(false);
-		}
-
-		final long startTime = System.currentTimeMillis();
-		cooldownTask = cooldownExecutor.scheduleAtFixedRate(() ->
-		{
-			long elapsed = System.currentTimeMillis() - startTime;
-			long remaining = (COOLDOWN_MS - elapsed) / 1_000;
-
-			if (remaining <= 0)
-			{
-				SwingUtilities.invokeLater(() ->
-				{
-					syncButton.setEnabled(true);
-					syncButton.setText("Sync Now");
-				});
-				if (cooldownTask != null)
-				{
-					cooldownTask.cancel(false);
-				}
-			}
-			else
-			{
-				final long r = remaining;
-				SwingUtilities.invokeLater(() -> syncButton.setText("Wait " + r + "s"));
-			}
-		}, 1, 1, TimeUnit.SECONDS);
+		plugin.requestManualSync();
+		refreshSyncStatus();
 	}
 
 	// ── Public API called by WomClanPlugin ─────────────────────────────────────
@@ -279,9 +266,7 @@ class WomClanPanel extends PluginPanel
 		allNameChanges = new ArrayList<>(clanData.getNameChanges());
 		allMembers.sort(Comparator.comparingLong(WomMember::getTotalXp).reversed());
 		updateClanInfo(clanData.getInfo() == null ? buildClanInfo(null, allMembers) : clanData.getInfo());
-		statusLabel.setText("Synced: just now");
-		syncButton.setEnabled(true);
-		syncButton.setText("Sync Now");
+		refreshSyncStatus();
 		filterMembers();
 
 		if (expandedWindow != null && expandedWindow.isVisible())
@@ -290,25 +275,35 @@ class WomClanPanel extends PluginPanel
 		}
 	}
 
-	/** Updates the status label text (call via SwingUtilities.invokeLater from background). */
-	void setSyncStatus(String msg)
+	/**
+	 * Redraws the sync button and status line from the plugin's refresh state. Safe to call as often
+	 * as wanted; the timer calls it once a second so elapsed times and the cooldown stay honest.
+	 */
+	void refreshSyncStatus()
 	{
-		statusLabel.setText(msg);
+		WomSyncStatus status = plugin.syncStatus();
+		long now = System.currentTimeMillis();
+
+		syncButton.setEnabled(status.isManualSyncAllowed());
+		syncButton.setText(describeSyncButton(status));
+
+		statusLabel.setText(describeStatus(status, now));
+		statusLabel.setToolTipText(status.hasSucceeded()
+			? "Last successful sync: " + WomFormat.timestamp(status.getLastSuccessMs())
+			: null);
 	}
 
 	/** Shows an error state in the panel (call via SwingUtilities.invokeLater). */
 	void showError(String msg)
 	{
-		statusLabel.setText("Sync failed");
-		syncButton.setEnabled(true);
-		syncButton.setText("Sync Now");
+		refreshSyncStatus();
 		updateClanInfo(null);
 		showPlaceholder("Error: " + msg + "\n\nCheck your Group ID and connection.");
 	}
 
 	void shutdown()
 	{
-		cooldownExecutor.shutdownNow();
+		statusTimer.stop();
 		if (expandedWindow != null)
 		{
 			expandedWindow.dispose();
