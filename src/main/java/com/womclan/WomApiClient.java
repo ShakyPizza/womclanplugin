@@ -21,8 +21,8 @@ import java.util.List;
 public class WomApiClient
 {
 	private static final String API_BASE = "https://api.wiseoldman.net/v2";
-	private static final int ACTIVITY_LIMIT = 20;
-	private static final int NAME_CHANGE_LIMIT = 20;
+	private static final int ACTIVITY_LIMIT = 50;
+	private static final int NAME_CHANGE_LIMIT = 50;
 
 	@Inject
 	private OkHttpClient okHttpClient;
