@@ -9,6 +9,7 @@ import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
+import java.awt.event.MouseEvent;
 import java.text.NumberFormat;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -25,6 +26,7 @@ import java.util.regex.Pattern;
 class WomExpandedWindow extends JFrame
 {
 	private static final NumberFormat INTEGER_FORMAT = NumberFormat.getIntegerInstance(Locale.US);
+	private static final int ACHIEVEMENT_DETAIL_COLUMN = 3;
 	private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 		.withZone(ZoneId.systemDefault());
 
@@ -102,8 +104,7 @@ class WomExpandedWindow extends JFrame
 				formatInstant(achievement.getCreatedAt()),
 				achievement.getDisplayName(),
 				achievement.getName(),
-				formatMetric(achievement.getMetric()),
-				formatAchievementValue(achievement)
+				WomFormat.achievementDetail(achievement)
 			});
 		}
 
@@ -182,13 +183,15 @@ class WomExpandedWindow extends JFrame
 
 	private JPanel buildAchievementTab()
 	{
-		JTable achievementTable = createTable(achievementTableModel);
+		// The metric and threshold live in a hidden model column and surface as a tooltip: showing
+		// them as their own columns repeated the milestone the achievement name already states.
+		JTable achievementTable = new TooltipTable(achievementTableModel, ACHIEVEMENT_DETAIL_COLUMN);
+		styleTable(achievementTable);
 		achievementTable.setRowSorter(new TableRowSorter<>(achievementTableModel));
+		achievementTable.removeColumn(achievementTable.getColumnModel().getColumn(ACHIEVEMENT_DETAIL_COLUMN));
 		achievementTable.getColumnModel().getColumn(0).setPreferredWidth(115);
 		achievementTable.getColumnModel().getColumn(1).setPreferredWidth(140);
-		achievementTable.getColumnModel().getColumn(2).setPreferredWidth(280);
-		achievementTable.getColumnModel().getColumn(3).setPreferredWidth(130);
-		achievementTable.getColumnModel().getColumn(4).setPreferredWidth(90);
+		achievementTable.getColumnModel().getColumn(2).setPreferredWidth(330);
 
 		JPanel panel = new JPanel(new BorderLayout(0, 0));
 		panel.add(wrapTable("Recent Achievements", achievementTable), BorderLayout.CENTER);
@@ -225,10 +228,15 @@ class WomExpandedWindow extends JFrame
 	private JTable createTable(DefaultTableModel tableModel)
 	{
 		JTable table = new JTable(tableModel);
+		styleTable(table);
+		return table;
+	}
+
+	private void styleTable(JTable table)
+	{
 		table.setFillsViewportHeight(true);
 		table.getTableHeader().setReorderingAllowed(false);
 		table.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
-		return table;
 	}
 
 	private DefaultTableModel createMemberTableModel()
@@ -258,7 +266,7 @@ class WomExpandedWindow extends JFrame
 
 	private DefaultTableModel createAchievementTableModel()
 	{
-		return new DefaultTableModel(new String[]{"Time", "Player", "Achievement", "Metric", "Value"}, 0)
+		return new DefaultTableModel(new String[]{"When", "Player", "Achievement", "Detail"}, 0)
 		{
 			@Override
 			public boolean isCellEditable(int row, int col)
@@ -297,12 +305,6 @@ class WomExpandedWindow extends JFrame
 		return instant == null ? "" : DATE_FORMAT.format(instant);
 	}
 
-	private String formatAchievementValue(WomAchievement achievement)
-	{
-		String value = INTEGER_FORMAT.format(achievement.getThreshold());
-		return achievement.getMeasure().isEmpty() ? value : value + " " + achievement.getMeasure();
-	}
-
 	private String formatActivityType(String type)
 	{
 		if ("joined".equals(type))
@@ -317,42 +319,70 @@ class WomExpandedWindow extends JFrame
 		{
 			return "Changed Role";
 		}
-		return formatMetric(type);
+		return WomFormat.titleCase(type);
 	}
 
 	private String formatNameChangeStatus(String status)
 	{
-		return formatMetric(status);
-	}
-
-	private String formatMetric(String metric)
-	{
-		if (metric == null || metric.isEmpty())
-		{
-			return "";
-		}
-		return formatRole(metric);
+		return WomFormat.titleCase(status);
 	}
 
 	private String formatRole(String role)
 	{
-		if (role == null || role.isEmpty())
+		return WomFormat.role(role);
+	}
+
+	/**
+	 * A table that explains the row it is hovering over: the full cell text when the column is too
+	 * narrow to show it, plus an optional detail held in a hidden model column.
+	 */
+	private static class TooltipTable extends JTable
+	{
+		private final int detailModelColumn;
+
+		TooltipTable(DefaultTableModel model, int detailModelColumn)
 		{
-			return "Member";
+			super(model);
+			this.detailModelColumn = detailModelColumn;
+			ToolTipManager.sharedInstance().registerComponent(this);
 		}
-		String[] words = role.replace('_', ' ').split(" ");
-		StringBuilder sb = new StringBuilder();
-		for (String word : words)
+
+		@Override
+		public String getToolTipText(MouseEvent event)
 		{
-			if (word.isEmpty())
+			int viewRow = rowAtPoint(event.getPoint());
+			int viewColumn = columnAtPoint(event.getPoint());
+			if (viewRow < 0 || viewColumn < 0)
 			{
-				continue;
+				return null;
 			}
-			if (sb.length() > 0) sb.append(' ');
-			sb.append(Character.toUpperCase(word.charAt(0)));
-			sb.append(word.substring(1).toLowerCase());
+
+			StringBuilder tooltip = new StringBuilder();
+			Object cellValue = getValueAt(viewRow, viewColumn);
+			String cellText = cellValue == null ? "" : cellValue.toString();
+			if (!cellText.isEmpty() && isClipped(cellText, viewColumn))
+			{
+				tooltip.append(cellText);
+			}
+
+			Object detail = getModel().getValueAt(convertRowIndexToModel(viewRow), detailModelColumn);
+			if (detail != null && !detail.toString().isEmpty())
+			{
+				if (tooltip.length() > 0)
+				{
+					tooltip.append(" — ");
+				}
+				tooltip.append(detail);
+			}
+
+			return tooltip.length() == 0 ? null : tooltip.toString();
 		}
-		return sb.toString();
+
+		private boolean isClipped(String text, int viewColumn)
+		{
+			int available = getColumnModel().getColumn(viewColumn).getWidth() - getIntercellSpacing().width - 4;
+			return getFontMetrics(getFont()).stringWidth(text) > available;
+		}
 	}
 
 	private static class IntegerRenderer extends DefaultTableCellRenderer
