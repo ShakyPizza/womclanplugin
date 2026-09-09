@@ -30,6 +30,7 @@ class WomExpandedWindow extends JFrame
 	private static final int SYNC_REFRESH_MS = 1_000;
 	private static final int TIME_COLUMN = 0;
 	private static final int ACHIEVEMENT_DETAIL_COLUMN = 3;
+	private static final int NAME_COLUMN = 1;
 	private static final int EHB_COLUMN = 5;
 	private static final int RANK_COLUMN_WIDTH = 70;
 
@@ -38,6 +39,9 @@ class WomExpandedWindow extends JFrame
 	private final DefaultTableModel activityTableModel;
 	private final DefaultTableModel nameChangeTableModel;
 	private final TableRowSorter<DefaultTableModel> memberSorter;
+	private final JTextField memberSearchField = new JTextField();
+	private final JButton memberClearButton = new JButton("Clear");
+	private final JLabel memberStatusLabel = new JLabel();
 	private final HistoryTab achievementTab;
 	private final HistoryTab activityTab;
 	private final HistoryTab nameChangeTab;
@@ -186,6 +190,7 @@ class WomExpandedWindow extends JFrame
 			});
 		}
 
+		filterMembers();
 		achievementTab.setHistory(achievements);
 		activityTab.setHistory(activity);
 		nameChangeTab.setHistory(nameChanges);
@@ -197,6 +202,7 @@ class WomExpandedWindow extends JFrame
 		achievementTableModel.setRowCount(0);
 		activityTableModel.setRowCount(0);
 		nameChangeTableModel.setRowCount(0);
+		filterMembers();
 		achievementTab.setHistory(WomHistory.pending());
 		activityTab.setHistory(WomHistory.pending());
 		nameChangeTab.setHistory(WomHistory.pending());
@@ -279,32 +285,48 @@ class WomExpandedWindow extends JFrame
 
 	private JPanel buildMembersTab(JTable memberTable)
 	{
-		JTextField searchField = new JTextField();
-		searchField.setFont(FontManager.getRunescapeSmallFont());
-		searchField.setToolTipText("Filter members by name...");
-
-		JPanel searchWrapper = new JPanel(new BorderLayout(6, 0));
-		searchWrapper.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-		searchWrapper.add(new JLabel("Search:"), BorderLayout.WEST);
-		searchWrapper.add(searchField, BorderLayout.CENTER);
-
-		searchField.getDocument().addDocumentListener(new DocumentListener()
+		memberSearchField.setFont(FontManager.getRunescapeSmallFont());
+		memberSearchField.setToolTipText("Filter members by name");
+		memberSearchField.getDocument().addDocumentListener(new DocumentListener()
 		{
-			public void insertUpdate(DocumentEvent e) { applyFilter(); }
-			public void removeUpdate(DocumentEvent e) { applyFilter(); }
-			public void changedUpdate(DocumentEvent e) { applyFilter(); }
-
-			private void applyFilter()
-			{
-				String text = searchField.getText().trim();
-				memberSorter.setRowFilter(text.isEmpty() ? null : RowFilter.regexFilter("(?i)" + Pattern.quote(text), 1));
-			}
+			public void insertUpdate(DocumentEvent e) { filterMembers(); }
+			public void removeUpdate(DocumentEvent e) { filterMembers(); }
+			public void changedUpdate(DocumentEvent e) { filterMembers(); }
 		});
 
+		memberClearButton.setEnabled(false);
+		memberClearButton.setFocusPainted(false);
+		memberClearButton.setToolTipText("Clear the search and show all members");
+		memberClearButton.addActionListener(e -> memberSearchField.setText(""));
+
+		JPanel searchRow = new JPanel(new BorderLayout(6, 0));
+		searchRow.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
+		searchRow.add(new JLabel("Search player:"), BorderLayout.WEST);
+		searchRow.add(memberSearchField, BorderLayout.CENTER);
+		searchRow.add(memberClearButton, BorderLayout.EAST);
+
+		memberStatusLabel.setBorder(BorderFactory.createEmptyBorder(4, 8, 6, 8));
+
+		JPanel heading = new JPanel(new BorderLayout(0, 0));
+		heading.add(searchRow, BorderLayout.NORTH);
+		heading.add(memberStatusLabel, BorderLayout.SOUTH);
+
 		JPanel panel = new JPanel(new BorderLayout(0, 0));
-		panel.add(searchWrapper, BorderLayout.NORTH);
+		panel.add(heading, BorderLayout.NORTH);
 		panel.add(new JScrollPane(memberTable), BorderLayout.CENTER);
 		return panel;
+	}
+
+	/** Applies the member search and reports how much of the list survived it. */
+	private void filterMembers()
+	{
+		String query = memberSearchField.getText().trim();
+		memberClearButton.setEnabled(!query.isEmpty());
+		memberSorter.setRowFilter(query.isEmpty()
+			? null
+			: RowFilter.regexFilter("(?i)" + Pattern.quote(query), NAME_COLUMN));
+		memberStatusLabel.setText(WomFormat.memberCount(
+			memberSorter.getViewRowCount(), memberTableModel.getRowCount(), query));
 	}
 
 	/**
