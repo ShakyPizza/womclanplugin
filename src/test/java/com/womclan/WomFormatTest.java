@@ -215,4 +215,37 @@ public class WomFormatTest
 		assertEquals("a first-load failure has nothing to keep, so it says when to retry instead",
 			"Sync failed · retry in 4:00", WomFormat.syncSummary(failed, false, now));
 	}
+
+	@Test
+	public void abbreviateShortensLargeTotals()
+	{
+		assertEquals("25.6B", WomFormat.abbreviate(25_600_000_000L));
+		assertEquals("42K", WomFormat.abbreviate(42_000L));
+		assertEquals("1.2M", WomFormat.abbreviate(1_234_567L));
+		assertEquals("999", WomFormat.abbreviate(999L));
+		assertEquals("0", WomFormat.abbreviate(0L));
+	}
+
+	@Test
+	public void abbreviatePromotesValuesThatRoundUpAMagnitude()
+	{
+		assertEquals("a value that rounds to 1000K must become 1M", "1M", WomFormat.abbreviate(999_960L));
+	}
+
+	@Test
+	public void abbreviateRoundsDoubles()
+	{
+		assertEquals("42K", WomFormat.abbreviate(42_000.4));
+		assertEquals("18K", WomFormat.abbreviate(18_000.25));
+	}
+
+	@Test
+	public void memberCountReportsSearchResults()
+	{
+		assertEquals("162 members", WomFormat.memberCount(162, 162, ""));
+		assertEquals("1 member", WomFormat.memberCount(1, 1, ""));
+		assertEquals("12 of 162 members", WomFormat.memberCount(12, 162, "wo"));
+		assertEquals("No members match \"zzz\"", WomFormat.memberCount(0, 162, "zzz"));
+		assertEquals("", WomFormat.memberCount(0, 0, ""));
+	}
 }

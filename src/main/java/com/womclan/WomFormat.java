@@ -1,5 +1,6 @@
 package com.womclan;
 
+import java.text.DecimalFormat;
 import java.text.NumberFormat;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -15,6 +16,8 @@ import java.util.Locale;
 final class WomFormat
 {
 	private static final NumberFormat INTEGER_FORMAT = NumberFormat.getIntegerInstance(Locale.US);
+	private static final DecimalFormat ABBREVIATED = new DecimalFormat("#.#");
+	private static final String[] MAGNITUDES = {"", "K", "M", "B", "T"};
 
 	/**
 	 * Highest total level reachable in game. A "levels" threshold larger than this cannot be a
@@ -322,5 +325,62 @@ final class WomFormat
 	static String exactMoment(Instant instant, ZoneId zone)
 	{
 		return instant == null ? "" : EXACT_MOMENT.format(instant.atZone(zone));
+	}
+
+	/**
+	 * Shortens a large total so it fits the sidebar's narrow column, e.g. 25,600,000,000 as 25.6B.
+	 * Callers pair this with {@link #integer} in a tooltip so the exact value stays discoverable.
+	 */
+	static String abbreviate(long value)
+	{
+		double scaled = value;
+		int magnitude = 0;
+		while (Math.abs(scaled) >= 1_000 && magnitude < MAGNITUDES.length - 1)
+		{
+			scaled /= 1_000;
+			magnitude++;
+		}
+
+		// Rounding to one decimal can push a value back up a magnitude: 999,960 is "1000K" unless
+		// it is promoted to "1M" here.
+		if (Math.abs(Math.round(scaled * 10) / 10.0) >= 1_000 && magnitude < MAGNITUDES.length - 1)
+		{
+			scaled /= 1_000;
+			magnitude++;
+		}
+
+		if (magnitude == 0)
+		{
+			return integer(value);
+		}
+
+		synchronized (ABBREVIATED)
+		{
+			return ABBREVIATED.format(scaled) + MAGNITUDES[magnitude];
+		}
+	}
+
+	static String abbreviate(double value)
+	{
+		return abbreviate(Math.round(value));
+	}
+
+	/**
+	 * Describes how much of the member list is on screen, so the search reports its own result
+	 * count rather than leaving the user to guess whether it matched anything.
+	 */
+	static String memberCount(int visible, int total, String query)
+	{
+		if (total == 0)
+		{
+			return "";
+		}
+		if (query.isEmpty())
+		{
+			return integer(total) + (total == 1 ? " member" : " members");
+		}
+		return visible == 0
+			? "No members match \"" + query + "\""
+			: integer(visible) + " of " + integer(total) + " members";
 	}
 }

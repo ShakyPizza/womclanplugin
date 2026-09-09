@@ -10,7 +10,6 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
-import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -24,13 +23,14 @@ class WomClanPanel extends PluginPanel
 	private static final String SETUP_CARD = "setup";
 	private static final String CLAN_CARD = "clan";
 	private static final String WOM_GROUPS_URL = "https://wiseoldman.net/groups";
+	private static final String DETAILS_TOOLTIP =
+		"Open the full member, achievement, activity and name-change tables in a separate window";
 	/** Width hint for wrapped HTML text: without it a label reports a single-line preferred size. */
 	private static final String WRAP_STYLE = "<html><body style='width:160px'>";
 	private static final WomMemberSort DEFAULT_SORT = WomMemberSort.TOTAL_XP;
 	private static final int STATUS_REFRESH_MS = 1_000;
 	private static final int SCROLLBAR_WIDTH = 8;
 	private static final int SCROLL_UNIT_INCREMENT = 16;
-	private static final NumberFormat INTEGER_FORMAT = NumberFormat.getIntegerInstance(Locale.US);
 
 	private final WomClanPlugin plugin;
 
@@ -43,6 +43,7 @@ class WomClanPanel extends PluginPanel
 	private final JLabel totalEhbLabel;
 	private final JButton syncButton;
 	private final JButton detailsButton;
+	private final JLabel resultCountLabel;
 	private final CardLayout cards = new CardLayout();
 	private final JPanel cardHolder = new JPanel(cards);
 	private final JTextField groupIdField = new JTextField();
@@ -82,11 +83,11 @@ class WomClanPanel extends PluginPanel
 		statusLabel.setHorizontalAlignment(SwingConstants.CENTER);
 		statusLabel.setBorder(new EmptyBorder(6, 0, 0, 0));
 
-		detailsButton = new JButton("Open GUI");
+		detailsButton = new JButton("Clan Details");
 		detailsButton.setFont(FontManager.getRunescapeSmallFont());
 		detailsButton.setFocusPainted(false);
 		styleHeaderButton(detailsButton);
-		detailsButton.setToolTipText("Open GUI in a separate window");
+		detailsButton.setToolTipText(DETAILS_TOOLTIP);
 		detailsButton.addActionListener(e -> openExpandedWindow());
 
 		JPanel buttonRow = new JPanel(new GridLayout(1, 2, 8, 0));
@@ -100,39 +101,43 @@ class WomClanPanel extends PluginPanel
 		topBar.add(buttonRow, BorderLayout.NORTH);
 		topBar.add(statusLabel, BorderLayout.SOUTH);
 
-		// ── Clan summary ───────────────────────────────────────────────────────
+		// ── Clan identity ──────────────────────────────────────────────────────
+		// Nested BorderLayouts rather than a BoxLayout: each row then gets the panel's full width,
+		// instead of being squeezed to its own preferred width and ellipsised.
 		clanNameLabel = new JLabel("Clan");
 		clanNameLabel.setFont(FontManager.getRunescapeBoldFont());
 		clanNameLabel.setForeground(Color.YELLOW);
+
+		memberCountLabel = createClanStatLabel();
+		memberCountLabel.setHorizontalAlignment(SwingConstants.RIGHT);
 
 		clanChatLabel = new JLabel("No clan data loaded");
 		clanChatLabel.setFont(FontManager.getRunescapeSmallFont());
 		clanChatLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 
-		JPanel clanTitlePanel = new JPanel();
-		clanTitlePanel.setLayout(new BoxLayout(clanTitlePanel, BoxLayout.Y_AXIS));
-		clanTitlePanel.setOpaque(false);
-		clanTitlePanel.add(clanNameLabel);
-		clanTitlePanel.add(clanChatLabel);
+		JPanel nameRow = new JPanel(new BorderLayout(6, 0));
+		nameRow.setOpaque(false);
+		nameRow.add(clanNameLabel, BorderLayout.CENTER);
+		nameRow.add(memberCountLabel, BorderLayout.EAST);
 
-		memberCountLabel = createClanStatLabel();
 		totalXpLabel = createClanStatLabel();
 		totalEhpLabel = createClanStatLabel();
 		totalEhbLabel = createClanStatLabel();
 
-		JPanel statsPanel = new JPanel(new GridLayout(2, 2, 8, 2));
+		// One compact row of abbreviated totals; the exact figures live in each label's tooltip.
+		JPanel statsPanel = new JPanel(new GridLayout(1, 3, 6, 0));
 		statsPanel.setOpaque(false);
-		statsPanel.add(memberCountLabel);
+		statsPanel.setBorder(new EmptyBorder(6, 0, 0, 0));
 		statsPanel.add(totalXpLabel);
 		statsPanel.add(totalEhpLabel);
 		statsPanel.add(totalEhbLabel);
-		
 
-		JPanel clanInfoPanel = new JPanel(new BorderLayout(0, 6));
+		JPanel clanInfoPanel = new JPanel(new BorderLayout(0, 2));
 		clanInfoPanel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		clanInfoPanel.setBorder(new EmptyBorder(0, 8, 8, 8));
-		clanInfoPanel.add(clanTitlePanel, BorderLayout.NORTH);
-		clanInfoPanel.add(statsPanel, BorderLayout.CENTER);
+		clanInfoPanel.setBorder(new EmptyBorder(8, 8, 8, 8));
+		clanInfoPanel.add(nameRow, BorderLayout.NORTH);
+		clanInfoPanel.add(clanChatLabel, BorderLayout.CENTER);
+		clanInfoPanel.add(statsPanel, BorderLayout.SOUTH);
 		updateClanInfo(null);
 
 		// ── Sort selector ──────────────────────────────────────────────────────
@@ -163,7 +168,7 @@ class WomClanPanel extends PluginPanel
 		searchField.setBorder(BorderFactory.createCompoundBorder(
 			BorderFactory.createLineBorder(ColorScheme.MEDIUM_GRAY_COLOR),
 			new EmptyBorder(4, 6, 4, 6)));
-		searchField.setToolTipText("Filter members by name…");
+		searchField.setToolTipText("Type part of a member's name");
 		searchField.getDocument().addDocumentListener(new DocumentListener()
 		{
 			public void insertUpdate(DocumentEvent e)
@@ -182,10 +187,23 @@ class WomClanPanel extends PluginPanel
 			}
 		});
 
+		// A visible label rather than a placeholder tooltip: the field's purpose should not need a
+		// hover to discover, and the count answers "did that match anything?" on the spot.
+		JLabel searchLabel = new JLabel("Search members");
+		searchLabel.setFont(FontManager.getRunescapeSmallFont());
+		searchLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		searchLabel.setLabelFor(searchField);
+		searchLabel.setBorder(new EmptyBorder(0, 0, 2, 0));
+
+		resultCountLabel = createClanStatLabel();
+		resultCountLabel.setBorder(new EmptyBorder(2, 0, 0, 0));
+
 		JPanel searchWrapper = new JPanel(new BorderLayout());
 		searchWrapper.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		searchWrapper.setBorder(new EmptyBorder(0, 8, 8, 8));
+		searchWrapper.add(searchLabel, BorderLayout.NORTH);
 		searchWrapper.add(searchField, BorderLayout.CENTER);
+		searchWrapper.add(resultCountLabel, BorderLayout.SOUTH);
 
 		JPanel listControls = new JPanel(new BorderLayout());
 		listControls.setBackground(ColorScheme.DARKER_GRAY_COLOR);
@@ -194,8 +212,9 @@ class WomClanPanel extends PluginPanel
 
 		JPanel headerPanel = new JPanel(new BorderLayout());
 		headerPanel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		headerPanel.add(topBar, BorderLayout.NORTH);
-		headerPanel.add(clanInfoPanel, BorderLayout.CENTER);
+		// Clan identity first: the sidebar is about a clan, not about its two buttons.
+		headerPanel.add(clanInfoPanel, BorderLayout.NORTH);
+		headerPanel.add(topBar, BorderLayout.CENTER);
 		headerPanel.add(listControls, BorderLayout.SOUTH);
 
 		JPanel clanCard = new JPanel(new BorderLayout(0, 0));
@@ -438,7 +457,7 @@ class WomClanPanel extends PluginPanel
 		detailsButton.setEnabled(currentData != null);
 		detailsButton.setToolTipText(currentData == null
 			? "Sync the clan first — there is nothing to show yet"
-			: "Open GUI in a separate window");
+			: DETAILS_TOOLTIP);
 	}
 
 	/**
@@ -482,17 +501,19 @@ class WomClanPanel extends PluginPanel
 	/** Applies the selected ordering and the search filter, in that order, and redraws the list. */
 	private void rebuildFromMembers()
 	{
-		String query = searchField.getText().trim().toLowerCase(Locale.US);
+		String query = searchField.getText().trim();
+		String needle = query.toLowerCase(Locale.US);
 		List<WomMember> filtered = new ArrayList<>();
 
 		for (WomMember m : selectedSort().sort(allMembers))
 		{
-			if (query.isEmpty() || m.getDisplayName().toLowerCase(Locale.US).contains(query))
+			if (needle.isEmpty() || m.getDisplayName().toLowerCase(Locale.US).contains(needle))
 			{
 				filtered.add(m);
 			}
 		}
 
+		resultCountLabel.setText(WomFormat.memberCount(filtered.size(), allMembers.size(), query));
 		rebuildList(filtered);
 	}
 
@@ -507,20 +528,22 @@ class WomClanPanel extends PluginPanel
 		if (info == null)
 		{
 			clanNameLabel.setText("Clan");
+			clanNameLabel.setToolTipText(null);
 			clanChatLabel.setText("No clan data loaded");
-			memberCountLabel.setText(formatStatLabel("Members", "-"));
-			totalXpLabel.setText(formatStatLabel("XP", "-"));
-			totalEhpLabel.setText(formatStatLabel("EHP", "-"));
-			totalEhbLabel.setText(formatStatLabel("EHB", "-"));
+			memberCountLabel.setText("");
+			setStat(totalXpLabel, "XP", "-", null);
+			setStat(totalEhpLabel, "EHP", "-", null);
+			setStat(totalEhbLabel, "EHB", "-", null);
 			return;
 		}
 
 		clanNameLabel.setText(info.getName());
+		clanNameLabel.setToolTipText(info.getName());
+		memberCountLabel.setText(WomFormat.memberCount(info.getMemberCount(), info.getMemberCount(), ""));
 		clanChatLabel.setText(info.getClanChat().isEmpty() ? "Clan chat: -" : "Clan chat: " + info.getClanChat());
-		memberCountLabel.setText(formatStatLabel("Members", INTEGER_FORMAT.format(info.getMemberCount())));
-		totalXpLabel.setText(formatStatLabel("XP", INTEGER_FORMAT.format(info.getTotalXp())));
-		totalEhpLabel.setText(formatStatLabel("EHP", formatDecimal(info.getTotalEhp())));
-		totalEhbLabel.setText(formatStatLabel("EHB", formatDecimal(info.getTotalEhb())));
+		setStat(totalXpLabel, "XP", WomFormat.abbreviate(info.getTotalXp()), WomFormat.integer(info.getTotalXp()));
+		setStat(totalEhpLabel, "EHP", WomFormat.abbreviate(info.getTotalEhp()), WomFormat.integer(info.getTotalEhp()));
+		setStat(totalEhbLabel, "EHB", WomFormat.abbreviate(info.getTotalEhb()), WomFormat.integer(info.getTotalEhb()));
 	}
 
 	private WomClanInfo buildClanInfo(String name, List<WomMember> members)
@@ -538,14 +561,11 @@ class WomClanPanel extends PluginPanel
 		return new WomClanInfo(name == null ? "Clan" : name, "", members.size(), totalXp, totalEhp, totalEhb);
 	}
 
-	private String formatDecimal(double value)
+	/** Shows an abbreviated total, keeping the exact figure one hover away. */
+	private void setStat(JLabel label, String name, String abbreviated, String exact)
 	{
-		return INTEGER_FORMAT.format(Math.round(value));
-	}
-
-	private String formatStatLabel(String label, String value)
-	{
-		return "<html><b>" + label + ":</b> " + value + "</html>";
+		label.setText("<html><b>" + name + "</b> " + abbreviated + "</html>");
+		label.setToolTipText(exact == null ? null : name + ": " + exact);
 	}
 
 	private void rebuildList(List<WomMember> members)
@@ -584,7 +604,8 @@ class WomClanPanel extends PluginPanel
 		{
 			return "This clan has no members on\nWise Old Man yet.";
 		}
-		return "No members match \"" + searchField.getText().trim() + "\".";
+		// The count above the list already states the miss, so this says what to do about it.
+		return "No members match \"" + searchField.getText().trim() + "\".\n\nClear the search to see all members.";
 	}
 
 	private void showPlaceholder(String text)
