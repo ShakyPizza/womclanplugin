@@ -61,6 +61,9 @@ class WomClanPanel extends PluginPanel
 
 	private WomExpandedWindow expandedWindow;
 
+	/** Flushes the expanded window's bounds; see WomWindowGeometry.restoreAndTrack. */
+	private Runnable saveExpandedGeometry;
+
 	WomClanPanel(WomClanPlugin plugin)
 	{
 		super(false);
@@ -481,6 +484,12 @@ class WomClanPanel extends PluginPanel
 		statusTimer.stop();
 		if (expandedWindow != null)
 		{
+			if (saveExpandedGeometry != null)
+			{
+				// Synchronously, because dispose()'s WINDOW_CLOSED may never be dispatched if the
+				// client is on its way out.
+				saveExpandedGeometry.run();
+			}
 			expandedWindow.dispose();
 		}
 	}
@@ -492,6 +501,7 @@ class WomClanPanel extends PluginPanel
 		if (expandedWindow == null || !expandedWindow.isDisplayable())
 		{
 			expandedWindow = new WomExpandedWindow(plugin);
+			saveExpandedGeometry = plugin.windowGeometry().restoreAndTrack(expandedWindow, this);
 		}
 		expandedWindow.setClanData(currentData);
 		expandedWindow.setVisible(true);

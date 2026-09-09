@@ -43,6 +43,15 @@ public class WomClanPlugin extends Plugin
 	@Inject
 	private ConfigManager configManager;
 
+	@Inject
+	private WomWindowGeometry windowGeometry;
+
+	/** Restores and records the expanded window's size and position across openings. */
+	WomWindowGeometry windowGeometry()
+	{
+		return windowGeometry;
+	}
+
 	private final WomSyncState syncState = new WomSyncState();
 
 	private volatile WomClanPanel panel;

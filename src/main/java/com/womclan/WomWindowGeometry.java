@@ -44,8 +44,15 @@ class WomWindowGeometry
 		this.save = save;
 	}
 
-	/** Called on the EDT once, after constructing the frame and before showing it. */
-	void restoreAndTrack(JFrame frame, Component anchor)
+	/**
+	 * Called on the EDT once, after constructing the frame and before showing it.
+	 *
+	 * @return an action that captures and persists the current bounds immediately. Closing the
+	 *         window saves on its own, but {@code dispose()} only posts WINDOW_CLOSED to the event
+	 *         queue; during plugin shutdown that event can go undispatched, so the caller flushes
+	 *         explicitly rather than losing the position of a window left open at exit.
+	 */
+	Runnable restoreAndTrack(JFrame frame, Component anchor)
 	{
 		List<Rectangle> screens = new ArrayList<>();
 		for (GraphicsDevice device : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices())
@@ -93,11 +100,17 @@ class WomWindowGeometry
 				capture();
 			}
 
+			void saveNow()
+			{
+				capture();
+				save.accept(encode(normalBounds));
+			}
+
 			@Override
 			public void windowClosed(WindowEvent event)
 			{
 				// Also handles plugin shutdown's dispose(), not just the title-bar close button.
-				save.accept(encode(normalBounds));
+				saveNow();
 			}
 		}
 		Tracker tracker = new Tracker();
@@ -116,6 +129,8 @@ class WomWindowGeometry
 				tracker.capture();
 			}
 		});
+
+		return tracker::saveNow;
 	}
 
 	static Rectangle fitToScreens(Rectangle requested, Dimension minimum, List<Rectangle> screens)
