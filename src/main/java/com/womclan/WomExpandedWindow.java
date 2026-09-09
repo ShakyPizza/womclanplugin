@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -29,6 +30,7 @@ class WomExpandedWindow extends JFrame
 	private static final String WINDOW_TITLE = "WiseOldMan Clan Stats";
 	private static final int SYNC_REFRESH_MS = 1_000;
 	private static final int ACHIEVEMENT_DETAIL_COLUMN = 3;
+	private static final int EHB_COLUMN = 5;
 	private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 		.withZone(ZoneId.systemDefault());
 
@@ -68,7 +70,11 @@ class WomExpandedWindow extends JFrame
 		JTable memberTable = createTable(memberTableModel);
 		memberSorter = new TableRowSorter<>(memberTableModel);
 		memberTable.setRowSorter(memberSorter);
-		memberTable.getColumnModel().getColumn(0).setPreferredWidth(20);
+		// Sort through the sorter rather than pre-sorting the rows, so the header carries the
+		// indicator that says what the initial order is. Set once: a refresh must not stomp on
+		// whatever column the user has since chosen.
+		memberSorter.setSortKeys(Collections.singletonList(new RowSorter.SortKey(EHB_COLUMN, SortOrder.DESCENDING)));
+		memberTable.getColumnModel().getColumn(0).setPreferredWidth(70);
 		memberTable.getColumnModel().getColumn(1).setPreferredWidth(170);
 		memberTable.getColumnModel().getColumn(2).setPreferredWidth(120);
 		memberTable.getColumnModel().getColumn(3).setPreferredWidth(130);
@@ -115,6 +121,8 @@ class WomExpandedWindow extends JFrame
 		{
 			WomMember m = sortedMembers.get(i);
 			memberTableModel.addRow(new Object[]{
+				// The rank is the player's standing by EHB, computed once and carried with them, so
+				// it keeps meaning the same thing after the table is re-sorted or filtered.
 				i + 1,
 				m.getDisplayName(),
 				formatRole(m.getRole()),
@@ -379,7 +387,7 @@ class WomExpandedWindow extends JFrame
 
 	private DefaultTableModel createMemberTableModel()
 	{
-		return new DefaultTableModel(new String[]{"#", "Name", "Role", "Total XP", "EHP", "EHB"}, 0)
+		return new DefaultTableModel(new String[]{"EHB Rank", "Name", "Role", "Total XP", "EHP", "EHB"}, 0)
 		{
 			@Override
 			public boolean isCellEditable(int row, int col)

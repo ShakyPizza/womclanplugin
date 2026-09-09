@@ -11,7 +11,6 @@ import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.text.NumberFormat;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
@@ -21,6 +20,7 @@ import java.util.Locale;
  */
 class WomClanPanel extends PluginPanel
 {
+	private static final WomMemberSort DEFAULT_SORT = WomMemberSort.TOTAL_XP;
 	private static final int STATUS_REFRESH_MS = 1_000;
 	private static final int SCROLLBAR_WIDTH = 8;
 	private static final int SCROLL_UNIT_INCREMENT = 16;
@@ -36,6 +36,7 @@ class WomClanPanel extends PluginPanel
 	private final JLabel totalEhpLabel;
 	private final JLabel totalEhbLabel;
 	private final JButton syncButton;
+	private final JComboBox<WomMemberSort> sortCombo;
 	private final JTextField searchField;
 	private final JPanel memberListPanel;
 
@@ -123,6 +124,25 @@ class WomClanPanel extends PluginPanel
 		clanInfoPanel.add(statsPanel, BorderLayout.CENTER);
 		updateClanInfo(null);
 
+		// ── Sort selector ──────────────────────────────────────────────────────
+		// The list shows names and roles only, so the ordering has to be stated rather than implied.
+		sortCombo = new JComboBox<>(WomMemberSort.values());
+		sortCombo.setSelectedItem(DEFAULT_SORT);
+		sortCombo.setFont(FontManager.getRunescapeSmallFont());
+		sortCombo.setToolTipText("Choose how the member list is ordered");
+		sortCombo.addActionListener(e -> rebuildFromMembers());
+
+		JLabel sortLabel = new JLabel("Sort by");
+		sortLabel.setFont(FontManager.getRunescapeSmallFont());
+		sortLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		sortLabel.setBorder(new EmptyBorder(0, 0, 0, 6));
+
+		JPanel sortWrapper = new JPanel(new BorderLayout());
+		sortWrapper.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		sortWrapper.setBorder(new EmptyBorder(0, 8, 6, 8));
+		sortWrapper.add(sortLabel, BorderLayout.WEST);
+		sortWrapper.add(sortCombo, BorderLayout.CENTER);
+
 		// ── Search field ───────────────────────────────────────────────────────
 		searchField = new JTextField();
 		searchField.setFont(FontManager.getRunescapeSmallFont());
@@ -137,17 +157,17 @@ class WomClanPanel extends PluginPanel
 		{
 			public void insertUpdate(DocumentEvent e)
 			{
-				filterMembers();
+				rebuildFromMembers();
 			}
 
 			public void removeUpdate(DocumentEvent e)
 			{
-				filterMembers();
+				rebuildFromMembers();
 			}
 
 			public void changedUpdate(DocumentEvent e)
 			{
-				filterMembers();
+				rebuildFromMembers();
 			}
 		});
 
@@ -156,11 +176,16 @@ class WomClanPanel extends PluginPanel
 		searchWrapper.setBorder(new EmptyBorder(0, 8, 8, 8));
 		searchWrapper.add(searchField, BorderLayout.CENTER);
 
+		JPanel listControls = new JPanel(new BorderLayout());
+		listControls.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		listControls.add(sortWrapper, BorderLayout.NORTH);
+		listControls.add(searchWrapper, BorderLayout.SOUTH);
+
 		JPanel headerPanel = new JPanel(new BorderLayout());
 		headerPanel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		headerPanel.add(topBar, BorderLayout.NORTH);
 		headerPanel.add(clanInfoPanel, BorderLayout.CENTER);
-		headerPanel.add(searchWrapper, BorderLayout.SOUTH);
+		headerPanel.add(listControls, BorderLayout.SOUTH);
 
 		add(headerPanel, BorderLayout.NORTH);
 
@@ -220,10 +245,9 @@ class WomClanPanel extends PluginPanel
 	{
 		currentData = clanData;
 		allMembers = new ArrayList<>(clanData.getMembers());
-		allMembers.sort(Comparator.comparingLong(WomMember::getTotalXp).reversed());
 		updateClanInfo(clanData.getInfo() == null ? buildClanInfo(null, allMembers) : clanData.getInfo());
 		refreshSyncStatus();
-		filterMembers();
+		rebuildFromMembers();
 
 		if (expandedWindow != null && expandedWindow.isVisible())
 		{
@@ -242,7 +266,7 @@ class WomClanPanel extends PluginPanel
 		searchField.setText("");
 		updateClanInfo(null);
 		refreshSyncStatus();
-		filterMembers();
+		rebuildFromMembers();
 
 		if (expandedWindow != null)
 		{
@@ -306,20 +330,27 @@ class WomClanPanel extends PluginPanel
 		expandedWindow.toFront();
 	}
 
-	private void filterMembers()
+	/** Applies the selected ordering and the search filter, in that order, and redraws the list. */
+	private void rebuildFromMembers()
 	{
-		String query = searchField.getText().trim().toLowerCase();
+		String query = searchField.getText().trim().toLowerCase(Locale.US);
 		List<WomMember> filtered = new ArrayList<>();
 
-		for (WomMember m : allMembers)
+		for (WomMember m : selectedSort().sort(allMembers))
 		{
-			if (query.isEmpty() || m.getDisplayName().toLowerCase().contains(query))
+			if (query.isEmpty() || m.getDisplayName().toLowerCase(Locale.US).contains(query))
 			{
 				filtered.add(m);
 			}
 		}
 
 		rebuildList(filtered);
+	}
+
+	private WomMemberSort selectedSort()
+	{
+		WomMemberSort selected = (WomMemberSort) sortCombo.getSelectedItem();
+		return selected == null ? DEFAULT_SORT : selected;
 	}
 
 	private void updateClanInfo(WomClanInfo info)
