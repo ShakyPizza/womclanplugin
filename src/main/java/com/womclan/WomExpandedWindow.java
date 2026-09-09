@@ -7,6 +7,8 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
+import javax.swing.border.Border;
+import javax.swing.table.TableCellRenderer;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
 import java.awt.event.MouseEvent;
@@ -31,6 +33,7 @@ class WomExpandedWindow extends JFrame
 	private static final int SYNC_REFRESH_MS = 1_000;
 	private static final int ACHIEVEMENT_DETAIL_COLUMN = 3;
 	private static final int EHB_COLUMN = 5;
+	private static final int RANK_COLUMN_WIDTH = 70;
 	private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 		.withZone(ZoneId.systemDefault());
 
@@ -74,13 +77,19 @@ class WomExpandedWindow extends JFrame
 		// indicator that says what the initial order is. Set once: a refresh must not stomp on
 		// whatever column the user has since chosen.
 		memberSorter.setSortKeys(Collections.singletonList(new RowSorter.SortKey(EHB_COLUMN, SortOrder.DESCENDING)));
-		memberTable.getColumnModel().getColumn(0).setPreferredWidth(70);
-		memberTable.getColumnModel().getColumn(1).setPreferredWidth(170);
-		memberTable.getColumnModel().getColumn(2).setPreferredWidth(120);
-		memberTable.getColumnModel().getColumn(3).setPreferredWidth(130);
-		memberTable.getColumnModel().getColumn(4).setPreferredWidth(70);
-		memberTable.getColumnModel().getColumn(5).setPreferredWidth(70);
+		// The rank only ever holds a member ordinal, so it is capped rather than left to share the
+		// extra width evenly with the name and role columns.
+		memberTable.getColumnModel().getColumn(0).setPreferredWidth(RANK_COLUMN_WIDTH);
+		memberTable.getColumnModel().getColumn(0).setMaxWidth(RANK_COLUMN_WIDTH + 20);
+		memberTable.getColumnModel().getColumn(1).setPreferredWidth(190);
+		memberTable.getColumnModel().getColumn(2).setPreferredWidth(130);
+		memberTable.getColumnModel().getColumn(3).setPreferredWidth(140);
+		memberTable.getColumnModel().getColumn(4).setPreferredWidth(80);
+		memberTable.getColumnModel().getColumn(5).setPreferredWidth(80);
+		memberTable.getColumnModel().getColumn(0).setCellRenderer(new IntegerRenderer());
 		memberTable.getColumnModel().getColumn(3).setCellRenderer(new IntegerRenderer());
+		memberTable.getColumnModel().getColumn(4).setCellRenderer(new DecimalRenderer());
+		memberTable.getColumnModel().getColumn(5).setCellRenderer(new DecimalRenderer());
 
 		JTabbedPane tabs = new JTabbedPane();
 		tabs.addTab("Members", buildMembersTab(memberTable));
@@ -327,8 +336,7 @@ class WomExpandedWindow extends JFrame
 	{
 		// The metric and threshold live in a hidden model column and surface as a tooltip: showing
 		// them as their own columns repeated the milestone the achievement name already states.
-		JTable achievementTable = new TooltipTable(achievementTableModel, ACHIEVEMENT_DETAIL_COLUMN);
-		styleTable(achievementTable);
+		JTable achievementTable = new WomTable(achievementTableModel, ACHIEVEMENT_DETAIL_COLUMN);
 		achievementTable.setRowSorter(new TableRowSorter<>(achievementTableModel));
 		achievementTable.removeColumn(achievementTable.getColumnModel().getColumn(ACHIEVEMENT_DETAIL_COLUMN));
 		achievementTable.getColumnModel().getColumn(0).setPreferredWidth(115);
@@ -373,16 +381,7 @@ class WomExpandedWindow extends JFrame
 
 	private JTable createTable(DefaultTableModel tableModel)
 	{
-		JTable table = new JTable(tableModel);
-		styleTable(table);
-		return table;
-	}
-
-	private void styleTable(JTable table)
-	{
-		table.setFillsViewportHeight(true);
-		table.getTableHeader().setReorderingAllowed(false);
-		table.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
+		return new WomTable(tableModel, -1);
 	}
 
 	private DefaultTableModel createMemberTableModel()
@@ -479,18 +478,80 @@ class WomExpandedWindow extends JFrame
 	}
 
 	/**
-	 * A table that explains the row it is hovering over: the full cell text when the column is too
-	 * narrow to show it, plus an optional detail held in a hidden model column.
+	 * The table styling shared by every tab: subtle row striping, roomy rows, and a tooltip that
+	 * explains the row it is hovering over — the full cell text when the column is too narrow to
+	 * show it, plus an optional detail held in a hidden model column.
 	 */
-	private static class TooltipTable extends JTable
+	private static class WomTable extends JTable
 	{
-		private final int detailModelColumn;
+		private static final int ROW_PADDING = 6;
+		private static final Border CELL_PADDING = BorderFactory.createEmptyBorder(0, 6, 0, 6);
 
-		TooltipTable(DefaultTableModel model, int detailModelColumn)
+		private final int detailModelColumn;
+		private Color stripeBase;
+		private Color stripeColor;
+
+		WomTable(DefaultTableModel model, int detailModelColumn)
 		{
 			super(model);
 			this.detailModelColumn = detailModelColumn;
+
+			setFillsViewportHeight(true);
+			getTableHeader().setReorderingAllowed(false);
+			setAutoResizeMode(AUTO_RESIZE_ALL_COLUMNS);
+			// Striping carries the row boundaries, so grid lines would just add noise.
+			setShowGrid(false);
+			setIntercellSpacing(new Dimension(0, 0));
+			setRowHeight(getRowHeight() + ROW_PADDING);
 			ToolTipManager.sharedInstance().registerComponent(this);
+		}
+
+		@Override
+		public Component prepareRenderer(TableCellRenderer renderer, int row, int column)
+		{
+			Component c = super.prepareRenderer(renderer, row, column);
+
+			if (!isRowSelected(row))
+			{
+				// Selection and focus keep the look and feel's own colours; only unselected rows
+				// are striped, so a selected row still stands out against either stripe.
+				c.setBackground(row % 2 == 0 ? getBackground() : stripeColor());
+			}
+
+			if (c instanceof JComponent)
+			{
+				JComponent cell = (JComponent) c;
+				// Inside the renderer's own border, so the focus rectangle stays visible.
+				cell.setBorder(BorderFactory.createCompoundBorder(cell.getBorder(), CELL_PADDING));
+			}
+
+			return c;
+		}
+
+		/** A stripe derived from the current background, so it follows whatever theme is in use. */
+		private Color stripeColor()
+		{
+			Color base = getBackground();
+			if (!base.equals(stripeBase))
+			{
+				int shift = luminance(base) < 128 ? 12 : -12;
+				stripeBase = base;
+				stripeColor = new Color(
+					clamp(base.getRed() + shift),
+					clamp(base.getGreen() + shift),
+					clamp(base.getBlue() + shift));
+			}
+			return stripeColor;
+		}
+
+		private static int luminance(Color color)
+		{
+			return (color.getRed() * 299 + color.getGreen() * 587 + color.getBlue() * 114) / 1000;
+		}
+
+		private static int clamp(int channel)
+		{
+			return Math.max(0, Math.min(255, channel));
 		}
 
 		@Override
@@ -504,29 +565,45 @@ class WomExpandedWindow extends JFrame
 			}
 
 			StringBuilder tooltip = new StringBuilder();
-			Object cellValue = getValueAt(viewRow, viewColumn);
-			String cellText = cellValue == null ? "" : cellValue.toString();
+			String cellText = renderedText(viewRow, viewColumn);
 			if (!cellText.isEmpty() && isClipped(cellText, viewColumn))
 			{
 				tooltip.append(cellText);
 			}
 
-			Object detail = getModel().getValueAt(convertRowIndexToModel(viewRow), detailModelColumn);
-			if (detail != null && !detail.toString().isEmpty())
+			if (detailModelColumn >= 0)
 			{
-				if (tooltip.length() > 0)
+				Object detail = getModel().getValueAt(convertRowIndexToModel(viewRow), detailModelColumn);
+				if (detail != null && !detail.toString().isEmpty())
 				{
-					tooltip.append(" — ");
+					if (tooltip.length() > 0)
+					{
+						tooltip.append(" — ");
+					}
+					tooltip.append(detail);
 				}
-				tooltip.append(detail);
 			}
 
 			return tooltip.length() == 0 ? null : tooltip.toString();
 		}
 
+		/** The text as the user sees it, so a formatted number tooltips as the formatted number. */
+		private String renderedText(int viewRow, int viewColumn)
+		{
+			Component c = prepareRenderer(getCellRenderer(viewRow, viewColumn), viewRow, viewColumn);
+			if (c instanceof JLabel)
+			{
+				String text = ((JLabel) c).getText();
+				return text == null ? "" : text;
+			}
+
+			Object value = getValueAt(viewRow, viewColumn);
+			return value == null ? "" : value.toString();
+		}
+
 		private boolean isClipped(String text, int viewColumn)
 		{
-			int available = getColumnModel().getColumn(viewColumn).getWidth() - getIntercellSpacing().width - 4;
+			int available = getColumnModel().getColumn(viewColumn).getWidth() - 2 * ROW_PADDING;
 			return getFontMetrics(getFont()).stringWidth(text) > available;
 		}
 	}
@@ -543,6 +620,34 @@ class WomExpandedWindow extends JFrame
 		{
 			setText(value instanceof Number
 				? INTEGER_FORMAT.format(((Number) value).longValue())
+				: "");
+		}
+	}
+
+	/**
+	 * Renders EHP and EHB at a fixed two decimal places. The model still holds the Double, so the
+	 * column continues to sort numerically rather than by the formatted text.
+	 */
+	private static class DecimalRenderer extends DefaultTableCellRenderer
+	{
+		private static final NumberFormat DECIMAL_FORMAT = NumberFormat.getNumberInstance(Locale.US);
+
+		static
+		{
+			DECIMAL_FORMAT.setMinimumFractionDigits(2);
+			DECIMAL_FORMAT.setMaximumFractionDigits(2);
+		}
+
+		DecimalRenderer()
+		{
+			setHorizontalAlignment(SwingConstants.RIGHT);
+		}
+
+		@Override
+		protected void setValue(Object value)
+		{
+			setText(value instanceof Number
+				? DECIMAL_FORMAT.format(((Number) value).doubleValue())
 				: "");
 		}
 	}
