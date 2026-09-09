@@ -10,7 +10,7 @@ It adds a RuneLite sidebar panel with your clan summary, a searchable member lis
 - Searchable member list in the RuneLite sidebar
 - Member roles shown next to each player
 - Manual `Sync Now` button
-- Automatic refresh every 30 minutes, if enabled
+- Automatic refresh every hour, if enabled
 - Larger `GUI` window for sortable member stats
 - Recent achievements, joins, leaves, and name changes in the expanded window
 
@@ -66,7 +66,7 @@ The expanded window also includes tabs for recent achievements, recent group act
 | Setting | What it does |
 |---|---|
 | `WOM Group ID` | The Wise Old Man group to sync |
-| `Auto-refresh (every 30 min)` | Automatically refreshes data while RuneLite is running |
+| `Auto-refresh (every 1 hour)` | Automatically refreshes data while RuneLite is running |
 
 Auto-refresh is enabled by default. You can still use `Sync Now` whenever you want an immediate update, subject to the 5 minute manual sync cooldown.
 

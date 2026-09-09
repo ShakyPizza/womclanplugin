@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit;
 )
 public class WomClanPlugin extends Plugin
 {
-	private static final int AUTO_REFRESH_MINUTES = 30;
+	private static final int AUTO_REFRESH_MINUTES = 60;
 
 	@Inject
 	private ClientToolbar clientToolbar;
@@ -113,7 +113,7 @@ public class WomClanPlugin extends Plugin
 			return;
 		}
 
-		// Fetch immediately on startup / config change, then every 30 min
+		// Fetch immediately on startup / config change, then every 60 min
 		autoRefreshTask = executor.scheduleAtFixedRate(
 			this::fetchAndUpdate,
 			0, AUTO_REFRESH_MINUTES, TimeUnit.MINUTES

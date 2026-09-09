@@ -20,8 +20,8 @@ public interface WomClanConfig extends Config
 
 	@ConfigItem(
 		keyName = "autoRefresh",
-		name = "Auto-refresh (every 30 min)",
-		description = "Automatically sync clan stats every 30 minutes while the client is running",
+		name = "Auto-refresh (every 1 hour)",
+		description = "Automatically sync clan stats every hour while the client is running",
 		position = 2
 	)
 	default boolean autoRefresh()
