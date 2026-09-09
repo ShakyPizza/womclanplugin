@@ -1,5 +1,6 @@
 package com.womclan;
 
+import com.google.gson.Gson;
 import org.junit.Test;
 import org.junit.Rule;
 import org.junit.rules.TemporaryFolder;
@@ -43,7 +44,7 @@ public class WomApiClientTest
 				.build();
 		}).build();
 		WomApiClient client = new WomApiClient(httpClient,
-			new WomClanCache(temporaryFolder.newFolder().toPath()));
+			new WomClanCache(temporaryFolder.newFolder().toPath(), new Gson()));
 
 		WomClanData data = client.fetchClanData(2300);
 

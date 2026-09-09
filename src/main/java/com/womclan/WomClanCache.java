@@ -27,17 +27,18 @@ class WomClanCache
 	static final long HISTORY_MAX_AGE_MS = 60 * 60 * 1_000L;
 
 	private final Path directory;
-	private final Gson gson = new Gson();
+	private final Gson gson;
 
 	@Inject
-	WomClanCache()
+	WomClanCache(Gson gson)
 	{
-		this(new File(RuneLite.CACHE_DIR, "wom-clan-stats").toPath());
+		this(new File(RuneLite.CACHE_DIR, "wom-clan-stats").toPath(), gson);
 	}
 
-	WomClanCache(Path directory)
+	WomClanCache(Path directory, Gson gson)
 	{
 		this.directory = directory;
+		this.gson = gson;
 	}
 
 	synchronized CachedClan load(int groupId)

@@ -1,5 +1,6 @@
 package com.womclan;
 
+import com.google.gson.Gson;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -21,7 +22,7 @@ public class WomClanCacheTest
 	@Test
 	public void groupCacheRestoresMembersWithoutInventingHistory() throws Exception
 	{
-		WomClanCache cache = new WomClanCache(temporaryFolder.newFolder().toPath());
+		WomClanCache cache = new WomClanCache(temporaryFolder.newFolder().toPath(), new Gson());
 		cache.storeGroup(GROUP_ID, GROUP_JSON, 1_000);
 
 		WomClanCache.CachedClan cached = cache.load(GROUP_ID);
@@ -36,7 +37,7 @@ public class WomClanCacheTest
 	@Test
 	public void completeHistoryCacheHasAnIndependentFreshnessClock() throws Exception
 	{
-		WomClanCache cache = new WomClanCache(temporaryFolder.newFolder().toPath());
+		WomClanCache cache = new WomClanCache(temporaryFolder.newFolder().toPath(), new Gson());
 		cache.storeGroup(GROUP_ID, GROUP_JSON, 1_000);
 		cache.storeAchievements(GROUP_ID, "[]", 2_000);
 		cache.storeActivity(GROUP_ID, "[]", 2_100);
