@@ -268,16 +268,32 @@ final class WomFormat
 			case FAILURE:
 				if (hasData && status.hasSucceeded())
 				{
-					return "Sync failed · showing data " + since(status.getLastSuccessMs(), nowMs);
+					return (status.getServerBackoffRemainingMs() > 0 ? "Rate limited" : "Sync failed")
+						+ " · showing data " + since(status.getLastSuccessMs(), nowMs);
 				}
 				return status.getCooldownRemainingMs() > 0
-					? "Sync failed · retry in " + countdown(status.getCooldownRemainingMs())
+					? (status.getServerBackoffRemainingMs() > 0 ? "Rate limited" : "Sync failed")
+						+ " · retry in " + countdown(status.getCooldownRemainingMs())
 					: "Sync failed · retry available";
+			case CACHED:
+				return "Cached · updated " + since(status.getLastSuccessMs(), nowMs);
 			case SUCCESS:
 				return "Synced " + since(status.getLastSuccessMs(), nowMs);
 			default:
 				return "Not synced yet";
 		}
+	}
+
+	/** Advanced request-budget detail for the status tooltip. */
+	static String rateLimitSummary(WomSyncStatus status, long nowMs)
+	{
+		if (!status.hasRateLimit() || status.getRateResetAtMs() <= nowMs)
+		{
+			return null;
+		}
+		long resetMs = Math.max(0, status.getRateResetAtMs() - nowMs);
+		return "WOM API: " + status.getRateRemaining() + "/" + status.getRateLimit()
+			+ " requests remaining · resets in " + countdown(resetMs);
 	}
 
 	/**

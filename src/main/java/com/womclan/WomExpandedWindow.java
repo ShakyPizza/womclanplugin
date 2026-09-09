@@ -252,10 +252,14 @@ class WomExpandedWindow extends JFrame
 	private void refreshSyncStatus()
 	{
 		WomSyncStatus status = plugin.syncStatus();
-		syncLabel.setText(WomFormat.syncSummary(status, hasData, System.currentTimeMillis()));
-		syncLabel.setToolTipText(status.hasSucceeded()
-			? "Last successful sync: " + WomFormat.timestamp(status.getLastSuccessMs())
-			: null);
+		long now = System.currentTimeMillis();
+		syncLabel.setText(WomFormat.syncSummary(status, hasData, now));
+		String freshness = status.hasSucceeded()
+			? "Last successful data: " + WomFormat.timestamp(status.getLastSuccessMs())
+			: null;
+		String budget = WomFormat.rateLimitSummary(status, now);
+		syncLabel.setToolTipText(freshness == null ? budget
+			: budget == null ? freshness : "<html>" + freshness + "<br>" + budget + "</html>");
 		refreshButton.setEnabled(status.isManualSyncAllowed());
 		refreshButton.setText(WomFormat.syncButtonText(status, "Refresh"));
 	}

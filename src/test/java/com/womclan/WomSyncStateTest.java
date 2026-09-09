@@ -38,7 +38,7 @@ public class WomSyncStateTest
 	public void manualFetchIsRefusedWhileAFetchIsRunning()
 	{
 		WomSyncState state = new WomSyncState();
-		assertTrue(state.beginAutoFetch());
+		assertTrue(state.beginAutoFetch(T0));
 		assertFalse(state.beginManualFetch(T0));
 		assertFalse(state.snapshot(T0).isManualSyncAllowed());
 	}
@@ -51,7 +51,7 @@ public class WomSyncStateTest
 		state.recordSuccess(T0);
 
 		long later = T0 + 60_000;
-		assertTrue(state.beginAutoFetch());
+		assertTrue(state.beginAutoFetch(later));
 		state.recordSuccess(later);
 
 		WomSyncStatus status = state.snapshot(later);
@@ -63,20 +63,20 @@ public class WomSyncStateTest
 	public void concurrentAutoFetchesAreSkipped()
 	{
 		WomSyncState state = new WomSyncState();
-		assertTrue(state.beginAutoFetch());
-		assertFalse(state.beginAutoFetch());
+		assertTrue(state.beginAutoFetch(T0));
+		assertFalse(state.beginAutoFetch(T0));
 		state.recordSuccess(T0);
-		assertTrue(state.beginAutoFetch());
+		assertTrue(state.beginAutoFetch(T0));
 	}
 
 	@Test
 	public void failureKeepsTheLastSuccessTimestamp()
 	{
 		WomSyncState state = new WomSyncState();
-		state.beginAutoFetch();
+		state.beginAutoFetch(T0);
 		state.recordSuccess(T0);
 
-		state.beginAutoFetch();
+		state.beginAutoFetch(T0 + 1_000);
 		state.recordFailure("boom");
 
 		WomSyncStatus status = state.snapshot(T0 + 1_000);
@@ -111,5 +111,40 @@ public class WomSyncStateTest
 		assertEquals(WomSyncState.Outcome.NEVER, status.getOutcome());
 		assertFalse(status.hasSucceeded());
 		assertEquals(WomSyncState.MANUAL_COOLDOWN_MS - 1_000, status.getCooldownRemainingMs());
+	}
+
+	@Test
+	public void restoredDeadlinesStillGateRequestsAfterRestart()
+	{
+		WomSyncState state = new WomSyncState();
+		state.restoreDeadlines(T0 + 120_000, T0 + 45_000);
+
+		assertFalse(state.beginManualFetch(T0));
+		assertFalse(state.beginAutoFetch(T0));
+		assertEquals(120_000, state.snapshot(T0).getCooldownRemainingMs());
+		assertTrue(state.beginAutoFetch(T0 + 45_000));
+	}
+
+	@Test
+	public void serverRetryAfterCanOutlastManualCooldown()
+	{
+		WomSyncState state = new WomSyncState();
+		state.applyRateLimit(new WomRateLimitStatus(20, 0, T0 + 600_000, T0 + 600_000));
+
+		WomSyncStatus status = state.snapshot(T0);
+		assertEquals(600_000, status.getCooldownRemainingMs());
+		assertEquals(600_000, status.getServerBackoffRemainingMs());
+		assertFalse(status.isManualSyncAllowed());
+	}
+
+	@Test
+	public void cachedDataHasItsOwnOutcome()
+	{
+		WomSyncState state = new WomSyncState();
+		state.recordCached(T0);
+
+		WomSyncStatus status = state.snapshot(T0 + 1_000);
+		assertEquals(WomSyncState.Outcome.CACHED, status.getOutcome());
+		assertEquals(T0, status.getLastSuccessMs());
 	}
 }

@@ -1,15 +1,59 @@
 package com.womclan;
 
 import org.junit.Test;
+import org.junit.Rule;
+import org.junit.rules.TemporaryFolder;
+
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Protocol;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
 
 import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class WomApiClientTest
 {
+	@Rule
+	public TemporaryFolder temporaryFolder = new TemporaryFolder();
+
+	@Test
+	public void sidebarFetchUsesOneRequestAndDefersHistory() throws Exception
+	{
+		AtomicInteger requests = new AtomicInteger();
+		OkHttpClient httpClient = new OkHttpClient.Builder().addInterceptor(chain ->
+		{
+			requests.incrementAndGet();
+			return new Response.Builder()
+				.request(chain.request())
+				.protocol(Protocol.HTTP_1_1)
+				.code(200)
+				.message("OK")
+				.header("RateLimit-Limit", "20")
+				.header("RateLimit-Remaining", "19")
+				.header("RateLimit-Reset", "60")
+				.body(ResponseBody.create(MediaType.parse("application/json"),
+					"{\"name\":\"One Request Clan\",\"memberships\":[]}"))
+				.build();
+		}).build();
+		WomApiClient client = new WomApiClient(httpClient,
+			new WomClanCache(temporaryFolder.newFolder().toPath()));
+
+		WomClanData data = client.fetchClanData(2300);
+
+		assertEquals(1, requests.get());
+		assertEquals(WomHistory.Status.PENDING, data.getAchievements().getStatus());
+		assertEquals(20, client.rateLimitStatus().getLimit());
+		assertEquals(19, client.rateLimitStatus().getRemaining());
+		assertTrue(client.rateLimitStatus().getResetAtMs() > System.currentTimeMillis());
+	}
+
 	@Test
 	public void parseMembersReadsGroupMemberships() throws IOException
 	{

@@ -30,6 +30,9 @@ import java.util.concurrent.TimeUnit;
 public class WomClanPlugin extends Plugin
 {
 	private static final int AUTO_REFRESH_MINUTES = 60;
+	private static final String NETWORK_STATE_GROUP = "womclan.network";
+	private static final String MANUAL_ALLOWED_AT_KEY = "manualAllowedAt";
+	private static final String SERVER_RETRY_AT_KEY = "serverRetryAt";
 
 	@Inject
 	private ClientToolbar clientToolbar;
@@ -58,11 +61,17 @@ public class WomClanPlugin extends Plugin
 	private NavigationButton navButton;
 	private ScheduledExecutorService executor;
 	private ScheduledFuture<?> autoRefreshTask;
+	private volatile WomClanData currentData;
+	private volatile long historyCachedAtMs;
 
 	@Override
 	protected void startUp() throws Exception
 	{
+		syncState.restoreDeadlines(
+			readDeadline(MANUAL_ALLOWED_AT_KEY),
+			readDeadline(SERVER_RETRY_AT_KEY));
 		panel = new WomClanPanel(this);
+		restoreCachedData();
 
 		navButton = NavigationButton.builder()
 			.tooltip("WOM Clan Stats")
@@ -111,10 +120,24 @@ public class WomClanPlugin extends Plugin
 		if (groupChanged)
 		{
 			syncState.reset();
+			currentData = null;
+			historyCachedAtMs = 0;
+			WomClanCache.CachedClan cached = isGroupConfigured()
+				? apiClient.loadCachedClanData(config.groupId()) : null;
+			if (cached != null)
+			{
+				currentData = cached.getData();
+				historyCachedAtMs = cached.getHistoryCachedAtMs();
+				syncState.recordCached(cached.getGroupCachedAtMs());
+			}
 			onPanel(panel ->
 			{
 				panel.clearClanData();
 				panel.setGroupConfigured(isGroupConfigured());
+				if (cached != null)
+				{
+					panel.updateClanData(cached.getData());
+				}
 			});
 		}
 
@@ -143,7 +166,26 @@ public class WomClanPlugin extends Plugin
 
 		if (syncState.beginManualFetch(System.currentTimeMillis()))
 		{
+			persistNetworkGate();
 			executor.submit(this::fetchAndUpdate);
+		}
+	}
+
+	/** Loads stale or missing detail feeds on demand when the expanded window is opened. */
+	void requestHistorySync()
+	{
+		long now = System.currentTimeMillis();
+		WomClanData base = currentData;
+		if (base == null || executor == null || executor.isShutdown()
+			|| historyCachedAtMs > 0 && now - historyCachedAtMs < WomClanCache.HISTORY_MAX_AGE_MS)
+		{
+			return;
+		}
+
+		if (syncState.beginAutoFetch(now))
+		{
+			executor.submit(() -> fetchHistoryAndUpdate(base));
+			onPanel(WomClanPanel::refreshSyncStatus);
 		}
 	}
 
@@ -197,7 +239,7 @@ public class WomClanPlugin extends Plugin
 	{
 		// A scheduled refresh that lands on top of a running one is simply skipped; it must not
 		// touch the manual cooldown either way.
-		if (syncState.beginAutoFetch())
+		if (syncState.beginAutoFetch(System.currentTimeMillis()))
 		{
 			fetchAndUpdate();
 		}
@@ -219,8 +261,20 @@ public class WomClanPlugin extends Plugin
 		try
 		{
 			WomClanData clanData = apiClient.fetchClanData(groupId);
+			currentData = clanData;
+			WomClanCache.CachedClan cached = apiClient.loadCachedClanData(groupId);
+			historyCachedAtMs = cached == null ? 0 : cached.getHistoryCachedAtMs();
 			syncState.recordSuccess(System.currentTimeMillis());
-			onPanel(p -> p.updateClanData(clanData));
+			onPanel(p ->
+			{
+				p.updateClanData(clanData);
+				// Opening Details during this fetch could not claim the shared request gate. Once
+				// overview loading finishes, satisfy that still-visible window on demand.
+				if (p.isDetailsVisible())
+				{
+					requestHistorySync();
+				}
+			});
 		}
 		catch (IOException e)
 		{
@@ -228,6 +282,92 @@ public class WomClanPlugin extends Plugin
 			syncState.recordFailure(e.getMessage());
 			onPanel(p -> p.showError(e.getMessage()));
 		}
+		finally
+		{
+			applyAndPersistRateLimit();
+		}
+	}
+
+	private void fetchHistoryAndUpdate(WomClanData requestedBase)
+	{
+		try
+		{
+			WomClanData latest = currentData;
+			if (latest == null || latest.getGroupId() != requestedBase.getGroupId())
+			{
+				syncState.recordFailure("Clan changed while loading details");
+				return;
+			}
+
+			WomClanData updated = apiClient.fetchClanHistory(latest.getGroupId(), latest);
+			currentData = updated;
+			WomClanCache.CachedClan cached = apiClient.loadCachedClanData(latest.getGroupId());
+			historyCachedAtMs = cached == null ? 0 : cached.getHistoryCachedAtMs();
+			syncState.recordSuccess(System.currentTimeMillis());
+			onPanel(p -> p.updateClanData(updated));
+		}
+		catch (IOException e)
+		{
+			log.warn("WOM Clan Stats: failed to fetch clan details: {}", e.getMessage());
+			syncState.recordFailure(e.getMessage());
+			onPanel(p -> p.showError(e.getMessage()));
+		}
+		finally
+		{
+			applyAndPersistRateLimit();
+		}
+	}
+
+	private void restoreCachedData()
+	{
+		int groupId = config.groupId();
+		if (groupId <= 0)
+		{
+			return;
+		}
+
+		WomClanCache.CachedClan cached = apiClient.loadCachedClanData(groupId);
+		if (cached == null)
+		{
+			return;
+		}
+
+		currentData = cached.getData();
+		historyCachedAtMs = cached.getHistoryCachedAtMs();
+		syncState.recordCached(cached.getGroupCachedAtMs());
+		panel.updateClanData(currentData);
+	}
+
+	private void applyAndPersistRateLimit()
+	{
+		syncState.applyRateLimit(apiClient.rateLimitStatus());
+		persistNetworkGate();
+		onPanel(WomClanPanel::refreshSyncStatus);
+	}
+
+	private long readDeadline(String key)
+	{
+		String value = configManager.getConfiguration(NETWORK_STATE_GROUP, key);
+		if (value == null)
+		{
+			return 0;
+		}
+		try
+		{
+			return Long.parseLong(value);
+		}
+		catch (NumberFormatException e)
+		{
+			return 0;
+		}
+	}
+
+	private void persistNetworkGate()
+	{
+		configManager.setConfiguration(NETWORK_STATE_GROUP, MANUAL_ALLOWED_AT_KEY,
+			Long.toString(syncState.getManualAllowedAtMs()));
+		configManager.setConfiguration(NETWORK_STATE_GROUP, SERVER_RETRY_AT_KEY,
+			Long.toString(syncState.getServerRetryAtMs()));
 	}
 
 	/** Runs a panel update on the EDT, skipping it if the plugin shut down in the meantime. */

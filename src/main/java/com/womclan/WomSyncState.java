@@ -17,13 +17,18 @@ class WomSyncState
 	enum Outcome
 	{
 		NEVER,
+		CACHED,
 		SUCCESS,
 		FAILURE,
 		NOT_CONFIGURED
 	}
 
-	private long lastManualFetchMs;
+	private long manualAllowedAtMs;
+	private long serverRetryAtMs;
 	private long lastSuccessMs;
+	private int rateLimit = -1;
+	private int rateRemaining = -1;
+	private long rateResetAtMs;
 	private boolean fetching;
 	private Outcome outcome = Outcome.NEVER;
 	private String errorMessage;
@@ -40,7 +45,7 @@ class WomSyncState
 			return false;
 		}
 
-		lastManualFetchMs = now;
+		manualAllowedAtMs = now + MANUAL_COOLDOWN_MS;
 		fetching = true;
 		return true;
 	}
@@ -51,15 +56,45 @@ class WomSyncState
 	 *
 	 * @return false when a fetch is already running
 	 */
-	synchronized boolean beginAutoFetch()
+	synchronized boolean beginAutoFetch(long now)
 	{
-		if (fetching)
+		if (fetching || serverRetryAtMs > now)
 		{
 			return false;
 		}
 
 		fetching = true;
 		return true;
+	}
+
+	/** Seeds the panel with disk-cached data while a network refresh is pending. */
+	synchronized void recordCached(long cachedAtMs)
+	{
+		if (lastSuccessMs == 0)
+		{
+			lastSuccessMs = cachedAtMs;
+			outcome = Outcome.CACHED;
+		}
+	}
+
+	/** Restores gates that must survive a plugin or RuneLite restart. */
+	synchronized void restoreDeadlines(long manualAllowedAtMs, long serverRetryAtMs)
+	{
+		this.manualAllowedAtMs = Math.max(0, manualAllowedAtMs);
+		this.serverRetryAtMs = Math.max(0, serverRetryAtMs);
+	}
+
+	/** Applies the authoritative request budget and backoff returned by WOM. */
+	synchronized void applyRateLimit(WomRateLimitStatus status)
+	{
+		if (status == null)
+		{
+			return;
+		}
+		rateLimit = status.getLimit();
+		rateRemaining = status.getRemaining();
+		rateResetAtMs = status.getResetAtMs();
+		serverRetryAtMs = Math.max(serverRetryAtMs, status.getRetryAtMs());
 	}
 
 	synchronized void recordSuccess(long now)
@@ -94,18 +129,25 @@ class WomSyncState
 
 	synchronized WomSyncStatus snapshot(long now)
 	{
-		return new WomSyncStatus(outcome, fetching, errorMessage, lastSuccessMs, cooldownRemaining(now));
+		return new WomSyncStatus(outcome, fetching, errorMessage, lastSuccessMs, cooldownRemaining(now),
+			rateLimit, rateRemaining, rateResetAtMs, Math.max(0, serverRetryAtMs - now));
+	}
+
+	synchronized long getManualAllowedAtMs()
+	{
+		return manualAllowedAtMs;
+	}
+
+	synchronized long getServerRetryAtMs()
+	{
+		return serverRetryAtMs;
 	}
 
 	private long cooldownRemaining(long now)
 	{
-		if (lastManualFetchMs == 0)
-		{
-			return 0;
-		}
-
 		// Clamped on both ends so a system clock that jumps cannot strand the button.
-		long remaining = MANUAL_COOLDOWN_MS - (now - lastManualFetchMs);
-		return Math.max(0, Math.min(MANUAL_COOLDOWN_MS, remaining));
+		long manualRemaining = Math.max(0, Math.min(MANUAL_COOLDOWN_MS, manualAllowedAtMs - now));
+		long serverRemaining = Math.max(0, serverRetryAtMs - now);
+		return Math.max(manualRemaining, serverRemaining);
 	}
 }

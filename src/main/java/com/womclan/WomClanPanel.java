@@ -452,9 +452,12 @@ class WomClanPanel extends PluginPanel
 		syncButton.setText(WomFormat.syncButtonText(status, "Sync Now"));
 
 		statusLabel.setText(WomFormat.syncSummary(status, currentData != null, now));
-		statusLabel.setToolTipText(status.hasSucceeded()
-			? "Last successful sync: " + WomFormat.timestamp(status.getLastSuccessMs())
-			: null);
+		String freshness = status.hasSucceeded()
+			? "Last successful data: " + WomFormat.timestamp(status.getLastSuccessMs())
+			: null;
+		String budget = WomFormat.rateLimitSummary(status, now);
+		statusLabel.setToolTipText(freshness == null ? budget
+			: budget == null ? freshness : "<html>" + freshness + "<br>" + budget + "</html>");
 
 		// Nothing to expand into a details window until a fetch has actually produced something.
 		detailsButton.setEnabled(currentData != null);
@@ -494,6 +497,11 @@ class WomClanPanel extends PluginPanel
 		}
 	}
 
+	boolean isDetailsVisible()
+	{
+		return expandedWindow != null && expandedWindow.isVisible();
+	}
+
 	// ── Private helpers ────────────────────────────────────────────────────────
 
 	private void openExpandedWindow()
@@ -506,6 +514,7 @@ class WomClanPanel extends PluginPanel
 		expandedWindow.setClanData(currentData);
 		expandedWindow.setVisible(true);
 		expandedWindow.toFront();
+		plugin.requestHistorySync();
 	}
 
 	/** Applies the selected ordering and the search filter, in that order, and redraws the list. */

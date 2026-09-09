@@ -217,6 +217,34 @@ public class WomFormatTest
 	}
 
 	@Test
+	public void syncSummaryIdentifiesDiskCachedData()
+	{
+		long now = 1_700_000_000_000L;
+		assertEquals("Cached · updated 5 mins ago",
+			WomFormat.syncSummary(status(WomSyncState.Outcome.CACHED, false, now - 5 * 60_000, 0), true, now));
+	}
+
+	@Test
+	public void syncSummaryNamesServerBackoffWhileRetainingData()
+	{
+		long now = 1_700_000_000_000L;
+		WomSyncStatus status = new WomSyncStatus(WomSyncState.Outcome.FAILURE, false, "429",
+			now - 12 * 60_000, 45_000, 20, 0, now + 45_000, 45_000);
+		assertEquals("Rate limited · showing data 12 mins ago", WomFormat.syncSummary(status, true, now));
+	}
+
+	@Test
+	public void rateLimitSummaryReportsTheServerBudget()
+	{
+		long now = 1_700_000_000_000L;
+		WomSyncStatus status = new WomSyncStatus(WomSyncState.Outcome.SUCCESS, false, null,
+			now, 0, 20, 16, now + 34_000, 0);
+		assertEquals("WOM API: 16/20 requests remaining · resets in 0:34",
+			WomFormat.rateLimitSummary(status, now));
+		assertNull(WomFormat.rateLimitSummary(status, now + 34_000));
+	}
+
+	@Test
 	public void abbreviateShortensLargeTotals()
 	{
 		assertEquals("25.6B", WomFormat.abbreviate(25_600_000_000L));

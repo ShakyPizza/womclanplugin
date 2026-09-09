@@ -27,20 +27,84 @@ public class WomApiClient
 	@Inject
 	private OkHttpClient okHttpClient;
 
+	@Inject
+	private WomClanCache cache;
+
+	private volatile WomRateLimitStatus rateLimitStatus = WomRateLimitStatus.UNKNOWN;
+
+	public WomApiClient()
+	{
+	}
+
+	/** Test seam for exercising the complete request path without dependency injection. */
+	WomApiClient(OkHttpClient okHttpClient, WomClanCache cache)
+	{
+		this.okHttpClient = okHttpClient;
+		this.cache = cache;
+	}
+
+	/** Fetches the one response needed by the sidebar. History is restored from cache, if present. */
 	public WomClanData fetchClanData(int groupId) throws IOException
 	{
 		String body = fetchBody(API_BASE + "/groups/" + groupId, "group " + groupId);
+		long now = System.currentTimeMillis();
+		cache.storeGroup(groupId, body, now);
 		List<WomMember> members = parseMembers(body);
+		WomClanCache.CachedClan cached = cache.load(groupId);
 
 		log.debug("Fetched {} members for group {}", members.size(), groupId);
 		return new WomClanData(
 			groupId,
 			parseClanInfo(body, members),
 			members,
-			fetchHistory(groupId, "achievements", () -> fetchAchievements(groupId)),
-			fetchHistory(groupId, "activity", () -> fetchActivity(groupId)),
-			fetchHistory(groupId, "name changes", () -> fetchNameChanges(groupId))
+			cached == null ? WomHistory.pending() : cached.getData().getAchievements(),
+			cached == null ? WomHistory.pending() : cached.getData().getActivity(),
+			cached == null ? WomHistory.pending() : cached.getData().getNameChanges()
 		);
+	}
+
+	/** Restores the most recent successful response immediately, without touching the network. */
+	WomClanCache.CachedClan loadCachedClanData(int groupId)
+	{
+		return cache.load(groupId);
+	}
+
+	/**
+	 * Fetches the optional detail feeds. This is called only when Clan Details needs them, rather
+	 * than spending three requests on every sidebar refresh.
+	 */
+	WomClanData fetchClanHistory(int groupId, WomClanData base) throws IOException
+	{
+		WomHistory<WomAchievement> achievements = fetchHistory(groupId, "achievements", () ->
+		{
+			String body = fetchBody(API_BASE + "/groups/" + groupId + "/achievements?limit=" + HISTORY_LIMIT,
+				"group achievements " + groupId);
+			cache.storeAchievements(groupId, body, System.currentTimeMillis());
+			return parseAchievements(body);
+		});
+
+		WomHistory<WomGroupActivity> activity = fetchHistory(groupId, "activity", () ->
+		{
+			String body = fetchBody(API_BASE + "/groups/" + groupId + "/activity?limit=" + HISTORY_LIMIT,
+				"group activity " + groupId);
+			cache.storeActivity(groupId, body, System.currentTimeMillis());
+			return parseActivity(body);
+		});
+
+		WomHistory<WomNameChange> nameChanges = fetchHistory(groupId, "name changes", () ->
+		{
+			String body = fetchBody(API_BASE + "/groups/" + groupId + "/name-changes?limit=" + HISTORY_LIMIT,
+				"group name changes " + groupId);
+			cache.storeNameChanges(groupId, body, System.currentTimeMillis());
+			return parseNameChanges(body);
+		});
+
+		return new WomClanData(groupId, base.getInfo(), base.getMembers(), achievements, activity, nameChanges);
+	}
+
+	WomRateLimitStatus rateLimitStatus()
+	{
+		return rateLimitStatus;
 	}
 
 	/**
@@ -100,7 +164,7 @@ public class WomApiClient
 	 * showing without them — but a failure is recorded rather than flattened into an empty list, so
 	 * the UI can tell "could not load" apart from "nothing happened recently".
 	 */
-	private <T> WomHistory<T> fetchHistory(int groupId, String noun, HistoryFetch<T> fetch)
+	private <T> WomHistory<T> fetchHistory(int groupId, String noun, HistoryFetch<T> fetch) throws IOException
 	{
 		try
 		{
@@ -108,6 +172,12 @@ public class WomApiClient
 		}
 		catch (IOException e)
 		{
+			// A 429 establishes a server deadline. Let the caller stop the detail sequence instead
+			// of turning it into three immediate rejected requests.
+			if (e instanceof WomApiException && ((WomApiException) e).getStatusCode() == 429)
+			{
+				throw e;
+			}
 			log.warn("WOM Clan Stats: failed to fetch {} for group {}: {}", noun, groupId, e.getMessage());
 			return WomHistory.unavailable(e.getMessage());
 		}
@@ -272,6 +342,12 @@ public class WomApiClient
 
 	private String fetchBody(String url, String context) throws IOException
 	{
+		long now = System.currentTimeMillis();
+		if (rateLimitStatus.getRetryAtMs() > now)
+		{
+			throw new WomApiException("WOM API retry available later", 429, rateLimitStatus.getRetryAtMs());
+		}
+
 		Request request = new Request.Builder()
 			.url(url)
 			.header("User-Agent", "WomClanStats-RuneLitePlugin/1.0")
@@ -279,9 +355,13 @@ public class WomApiClient
 
 		try (Response response = okHttpClient.newCall(request).execute())
 		{
+			captureRateLimit(response, System.currentTimeMillis());
 			if (!response.isSuccessful())
 			{
-				throw new IOException("WOM API error " + response.code() + " for " + context);
+				throw new WomApiException(
+					"WOM API error " + response.code() + " for " + context,
+					response.code(),
+					rateLimitStatus.getRetryAtMs());
 			}
 
 			ResponseBody responseBody = response.body();
@@ -292,6 +372,43 @@ public class WomApiClient
 
 			return responseBody.string();
 		}
+	}
+
+	private void captureRateLimit(Response response, long nowMs)
+	{
+		int limit = headerInt(response, "RateLimit-Limit", -1);
+		int remaining = headerInt(response, "RateLimit-Remaining", -1);
+		long resetAt = deadline(nowMs, headerInt(response, "RateLimit-Reset", 0));
+		long retryAt = deadline(nowMs, headerInt(response, "Retry-After", 0));
+		// The last permitted response has no Retry-After yet, but Remaining: 0 already tells us
+		// that another request in this window would be rejected.
+		if (remaining == 0 && retryAt == 0)
+		{
+			retryAt = resetAt;
+		}
+		rateLimitStatus = new WomRateLimitStatus(limit, remaining, resetAt, retryAt);
+	}
+
+	private static int headerInt(Response response, String name, int defaultValue)
+	{
+		String value = response.header(name);
+		if (value == null)
+		{
+			return defaultValue;
+		}
+		try
+		{
+			return Integer.parseInt(value);
+		}
+		catch (NumberFormatException e)
+		{
+			return defaultValue;
+		}
+	}
+
+	private static long deadline(long nowMs, int seconds)
+	{
+		return seconds <= 0 ? 0 : nowMs + seconds * 1_000L;
 	}
 
 	private static String readPlayerDisplayName(JsonObject obj)
