@@ -26,6 +26,8 @@ final class WomFormat
 	private static final DateTimeFormatter TIME_OF_DAY = DateTimeFormatter.ofPattern("HH:mm", Locale.US);
 	private static final DateTimeFormatter DATE_AND_TIME = DateTimeFormatter.ofPattern("d MMM HH:mm", Locale.US);
 	private static final DateTimeFormatter FULL_TIMESTAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.US);
+	private static final DateTimeFormatter SHORT_DATE = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.US);
+	private static final DateTimeFormatter EXACT_MOMENT = DateTimeFormatter.ofPattern("EEE d MMM yyyy, HH:mm", Locale.US);
 
 	private WomFormat()
 	{
@@ -202,16 +204,26 @@ final class WomFormat
 	 * @param displayedRows rows actually on screen, which can be fewer than the fetched entries
 	 * @param noun          plural noun for the section, e.g. "name changes"
 	 */
-	static String historyStatus(WomHistory.Status status, int displayedRows, String noun)
+	static String historyStatus(WomHistory.Status status, int fetchedRows, int visibleRows, String query, String noun)
 	{
 		switch (status)
 		{
 			case UNAVAILABLE:
 				return "Could not load " + noun + ".";
 			case LOADED:
-				return displayedRows == 0
-					? "No recent " + noun + "."
-					: "Showing " + integer(displayedRows) + " recent " + noun + ".";
+				if (fetchedRows == 0)
+				{
+					return "No recent " + noun + ".";
+				}
+				if (query.isEmpty())
+				{
+					return "Showing " + integer(fetchedRows) + " recent " + noun + ".";
+				}
+				// A search that matches nothing is a different situation from a clan with no recent
+				// events, and both differ again from a fetch that failed.
+				return visibleRows == 0
+					? "No " + noun + " match \"" + query + "\"."
+					: "Showing " + integer(visibleRows) + " of " + integer(fetchedRows) + " recent " + noun + ".";
 			default:
 				return "Loading " + noun + "…";
 		}
@@ -263,5 +275,52 @@ final class WomFormat
 			default:
 				return "Not synced yet";
 		}
+	}
+
+	/**
+	 * A compact relative date for history rows, coarsening as events get older. The exact moment
+	 * stays available through {@link #exactMoment}.
+	 */
+	static String relative(Instant instant, long nowMs)
+	{
+		return relative(instant, nowMs, ZoneId.systemDefault());
+	}
+
+	static String relative(Instant instant, long nowMs, ZoneId zone)
+	{
+		if (instant == null)
+		{
+			return "";
+		}
+
+		long minutes = Math.max(0, nowMs - instant.toEpochMilli()) / 60_000;
+		if (minutes < 1)
+		{
+			return "just now";
+		}
+		if (minutes < 60)
+		{
+			return minutes + "m ago";
+		}
+
+		long hours = minutes / 60;
+		if (hours < 24)
+		{
+			return hours + "h ago";
+		}
+
+		long days = hours / 24;
+		return days < 7 ? days + "d ago" : SHORT_DATE.format(instant.atZone(zone));
+	}
+
+	/** The full moment behind a relative date, for the hover tooltip. */
+	static String exactMoment(Instant instant)
+	{
+		return exactMoment(instant, ZoneId.systemDefault());
+	}
+
+	static String exactMoment(Instant instant, ZoneId zone)
+	{
+		return instant == null ? "" : EXACT_MOMENT.format(instant.atZone(zone));
 	}
 }

@@ -130,13 +130,53 @@ public class WomFormatTest
 	public void historyStatusSeparatesEmptyFromUnavailable()
 	{
 		assertEquals("No recent name changes.",
-			WomFormat.historyStatus(WomHistory.Status.LOADED, 0, "name changes"));
+			WomFormat.historyStatus(WomHistory.Status.LOADED, 0, 0, "", "name changes"));
 		assertEquals("Could not load name changes.",
-			WomFormat.historyStatus(WomHistory.Status.UNAVAILABLE, 0, "name changes"));
+			WomFormat.historyStatus(WomHistory.Status.UNAVAILABLE, 0, 0, "", "name changes"));
 		assertEquals("Loading name changes…",
-			WomFormat.historyStatus(WomHistory.Status.PENDING, 0, "name changes"));
+			WomFormat.historyStatus(WomHistory.Status.PENDING, 0, 0, "", "name changes"));
 		assertEquals("Showing 1,200 recent achievements.",
-			WomFormat.historyStatus(WomHistory.Status.LOADED, 1200, "achievements"));
+			WomFormat.historyStatus(WomHistory.Status.LOADED, 1200, 1200, "", "achievements"));
+	}
+
+	@Test
+	public void historyStatusSeparatesNoMatchesFromNoEvents()
+	{
+		assertEquals("No achievements match \"zezima\".",
+			WomFormat.historyStatus(WomHistory.Status.LOADED, 50, 0, "zezima", "achievements"));
+		assertEquals("Showing 3 of 50 recent achievements.",
+			WomFormat.historyStatus(WomHistory.Status.LOADED, 50, 3, "woox", "achievements"));
+	}
+
+	@Test
+	public void historyStatusReportsFailureAheadOfAnyQuery()
+	{
+		assertEquals("Could not load activity.",
+			WomFormat.historyStatus(WomHistory.Status.UNAVAILABLE, 0, 0, "woox", "activity"));
+	}
+
+	@Test
+	public void relativeDatesCoarsenAsEventsAge()
+	{
+		long now = utc(2026, 9, 9, 14, 30);
+		assertEquals("", WomFormat.relative(null, now, UTC));
+		assertEquals("just now", WomFormat.relative(instantAt(2026, 9, 9, 14, 30), now, UTC));
+		assertEquals("45m ago", WomFormat.relative(instantAt(2026, 9, 9, 13, 45), now, UTC));
+		assertEquals("5h ago", WomFormat.relative(instantAt(2026, 9, 9, 9, 30), now, UTC));
+		assertEquals("3d ago", WomFormat.relative(instantAt(2026, 9, 6, 14, 30), now, UTC));
+		assertEquals("8 Sep 2025", WomFormat.relative(instantAt(2025, 9, 8, 14, 30), now, UTC));
+	}
+
+	@Test
+	public void exactMomentBacksTheRelativeDate()
+	{
+		assertEquals("Tue 8 Sep 2026, 14:22", WomFormat.exactMoment(instantAt(2026, 9, 8, 14, 22), UTC));
+		assertEquals("", WomFormat.exactMoment(null, UTC));
+	}
+
+	private static Instant instantAt(int year, int month, int day, int hour, int minute)
+	{
+		return Instant.ofEpochMilli(utc(year, month, day, hour, minute));
 	}
 
 	private static WomSyncStatus status(WomSyncState.Outcome outcome, boolean fetching, long lastSuccessMs, long cooldownMs)

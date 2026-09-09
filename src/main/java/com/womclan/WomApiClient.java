@@ -21,8 +21,8 @@ import java.util.List;
 public class WomApiClient
 {
 	private static final String API_BASE = "https://api.wiseoldman.net/v2";
-	private static final int ACTIVITY_LIMIT = 50;
-	private static final int NAME_CHANGE_LIMIT = 50;
+	/** How many history entries each optional section fetches. The UI names this, so it is shared. */
+	static final int HISTORY_LIMIT = 50;
 
 	@Inject
 	private OkHttpClient okHttpClient;
@@ -62,7 +62,7 @@ public class WomApiClient
 	public List<WomAchievement> fetchAchievements(int groupId) throws IOException
 	{
 		String body = fetchBody(
-			API_BASE + "/groups/" + groupId + "/achievements?limit=" + ACTIVITY_LIMIT,
+			API_BASE + "/groups/" + groupId + "/achievements?limit=" + HISTORY_LIMIT,
 			"group achievements " + groupId
 		);
 		List<WomAchievement> achievements = parseAchievements(body);
@@ -74,7 +74,7 @@ public class WomApiClient
 	public List<WomGroupActivity> fetchActivity(int groupId) throws IOException
 	{
 		String body = fetchBody(
-			API_BASE + "/groups/" + groupId + "/activity?limit=" + ACTIVITY_LIMIT,
+			API_BASE + "/groups/" + groupId + "/activity?limit=" + HISTORY_LIMIT,
 			"group activity " + groupId
 		);
 		List<WomGroupActivity> activity = parseActivity(body);
@@ -86,7 +86,7 @@ public class WomApiClient
 	public List<WomNameChange> fetchNameChanges(int groupId) throws IOException
 	{
 		String body = fetchBody(
-			API_BASE + "/groups/" + groupId + "/name-changes?limit=" + NAME_CHANGE_LIMIT,
+			API_BASE + "/groups/" + groupId + "/name-changes?limit=" + HISTORY_LIMIT,
 			"group name changes " + groupId
 		);
 		List<WomNameChange> nameChanges = parseNameChanges(body);

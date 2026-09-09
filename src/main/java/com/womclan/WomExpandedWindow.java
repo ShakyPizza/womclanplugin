@@ -13,9 +13,6 @@ import javax.swing.table.TableRowSorter;
 import java.awt.*;
 import java.awt.event.MouseEvent;
 import java.text.NumberFormat;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -31,20 +28,19 @@ class WomExpandedWindow extends JFrame
 	private static final NumberFormat INTEGER_FORMAT = NumberFormat.getIntegerInstance(Locale.US);
 	private static final String WINDOW_TITLE = "WiseOldMan Clan Stats";
 	private static final int SYNC_REFRESH_MS = 1_000;
+	private static final int TIME_COLUMN = 0;
 	private static final int ACHIEVEMENT_DETAIL_COLUMN = 3;
 	private static final int EHB_COLUMN = 5;
 	private static final int RANK_COLUMN_WIDTH = 70;
-	private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-		.withZone(ZoneId.systemDefault());
 
 	private final DefaultTableModel memberTableModel;
 	private final DefaultTableModel achievementTableModel;
 	private final DefaultTableModel activityTableModel;
 	private final DefaultTableModel nameChangeTableModel;
 	private final TableRowSorter<DefaultTableModel> memberSorter;
-	private final JLabel achievementStatusLabel = createStatusLabel();
-	private final JLabel activityStatusLabel = createStatusLabel();
-	private final JLabel nameChangeStatusLabel = createStatusLabel();
+	private final HistoryTab achievementTab;
+	private final HistoryTab activityTab;
+	private final HistoryTab nameChangeTab;
 
 	private final WomClanPlugin plugin;
 	private final JLabel clanLabel = new JLabel();
@@ -91,11 +87,18 @@ class WomExpandedWindow extends JFrame
 		memberTable.getColumnModel().getColumn(4).setCellRenderer(new DecimalRenderer());
 		memberTable.getColumnModel().getColumn(5).setCellRenderer(new DecimalRenderer());
 
+		// Player search on every history tab: with up to HISTORY_LIMIT entries, finding one player's
+		// events by eye is a scan. Name changes match the old and new names too, since that is
+		// exactly what someone looking one up remembers.
+		achievementTab = new HistoryTab("achievements", achievementTableModel, ACHIEVEMENT_DETAIL_COLUMN, new int[]{1});
+		activityTab = new HistoryTab("activity", activityTableModel, -1, new int[]{1});
+		nameChangeTab = new HistoryTab("name changes", nameChangeTableModel, -1, new int[]{1, 2, 3});
+
 		JTabbedPane tabs = new JTabbedPane();
 		tabs.addTab("Members", buildMembersTab(memberTable));
-		tabs.addTab("Achievements", buildAchievementTab());
-		tabs.addTab("Activity", buildActivityTab());
-		tabs.addTab("Name Changes", buildNameChangeTab());
+		tabs.addTab("Achievements", achievementTab.build("Recent Achievements", 110, 150, 330));
+		tabs.addTab("Activity", activityTab.build("Recent Activity", 110, 200, 110, 130));
+		tabs.addTab("Name Changes", nameChangeTab.build("Recent Name Changes", 110, 150, 150, 150, 100));
 		add(buildHeader(), BorderLayout.NORTH);
 		add(tabs, BorderLayout.CENTER);
 
@@ -146,7 +149,7 @@ class WomExpandedWindow extends JFrame
 		for (WomAchievement achievement : achievements.getEntries())
 		{
 			achievementTableModel.addRow(new Object[]{
-				formatInstant(achievement.getCreatedAt()),
+				new WomInstantCell(achievement.getCreatedAt()),
 				achievement.getDisplayName(),
 				achievement.getName(),
 				WomFormat.achievementDetail(achievement)
@@ -163,7 +166,7 @@ class WomExpandedWindow extends JFrame
 			}
 
 			activityTableModel.addRow(new Object[]{
-				formatInstant(entry.getCreatedAt()),
+				new WomInstantCell(entry.getCreatedAt()),
 				entry.getDisplayName(),
 				formatActivityType(entry.getType()),
 				formatRole(entry.getRole())
@@ -175,7 +178,7 @@ class WomExpandedWindow extends JFrame
 		for (WomNameChange nameChange : nameChanges.getEntries())
 		{
 			nameChangeTableModel.addRow(new Object[]{
-				formatInstant(nameChange.getResolvedAt() == null ? nameChange.getCreatedAt() : nameChange.getResolvedAt()),
+				new WomInstantCell(nameChange.getResolvedAt() == null ? nameChange.getCreatedAt() : nameChange.getResolvedAt()),
 				nameChange.getDisplayName(),
 				nameChange.getOldName(),
 				nameChange.getNewName(),
@@ -183,10 +186,9 @@ class WomExpandedWindow extends JFrame
 			});
 		}
 
-		// Row counts rather than entry counts: the activity tab shows only membership changes.
-		applyHistoryStatus(achievementStatusLabel, achievements, achievementTableModel.getRowCount(), "achievements");
-		applyHistoryStatus(activityStatusLabel, activity, activityTableModel.getRowCount(), "activity");
-		applyHistoryStatus(nameChangeStatusLabel, nameChanges, nameChangeTableModel.getRowCount(), "name changes");
+		achievementTab.setHistory(achievements);
+		activityTab.setHistory(activity);
+		nameChangeTab.setHistory(nameChanges);
 	}
 
 	private void clearTables()
@@ -195,22 +197,9 @@ class WomExpandedWindow extends JFrame
 		achievementTableModel.setRowCount(0);
 		activityTableModel.setRowCount(0);
 		nameChangeTableModel.setRowCount(0);
-		applyHistoryStatus(achievementStatusLabel, WomHistory.pending(), 0, "achievements");
-		applyHistoryStatus(activityStatusLabel, WomHistory.pending(), 0, "activity");
-		applyHistoryStatus(nameChangeStatusLabel, WomHistory.pending(), 0, "name changes");
-	}
-
-	private void applyHistoryStatus(JLabel label, WomHistory<?> history, int displayedRows, String noun)
-	{
-		label.setText(WomFormat.historyStatus(history.getStatus(), displayedRows, noun));
-		label.setToolTipText(history.getError());
-	}
-
-	private static JLabel createStatusLabel()
-	{
-		JLabel label = new JLabel();
-		label.setBorder(BorderFactory.createEmptyBorder(0, 8, 6, 8));
-		return label;
+		achievementTab.setHistory(WomHistory.pending());
+		activityTab.setHistory(WomHistory.pending());
+		nameChangeTab.setHistory(WomHistory.pending());
 	}
 
 	/**
@@ -318,65 +307,111 @@ class WomExpandedWindow extends JFrame
 		return panel;
 	}
 
-	private JPanel buildActivityTab()
+	/**
+	 * One history tab: a titled table with its own player search and a status line that says which
+	 * of loading, unavailable, empty, filtered-to-nothing or populated it is currently in.
+	 */
+	private final class HistoryTab
 	{
-		JTable activityTable = createTable(activityTableModel);
-		activityTable.setRowSorter(new TableRowSorter<>(activityTableModel));
-		activityTable.getColumnModel().getColumn(0).setPreferredWidth(115);
-		activityTable.getColumnModel().getColumn(1).setPreferredWidth(180);
-		activityTable.getColumnModel().getColumn(2).setPreferredWidth(100);
-		activityTable.getColumnModel().getColumn(3).setPreferredWidth(110);
+		private final String noun;
+		private final DefaultTableModel model;
+		private final int detailColumn;
+		private final int[] searchColumns;
+		private final JTable table;
+		private final TableRowSorter<DefaultTableModel> sorter;
+		private final JLabel statusLabel = new JLabel();
+		private final JTextField searchField = new JTextField();
+		private final JButton clearButton = new JButton("Clear");
 
-		JPanel panel = new JPanel(new BorderLayout(0, 0));
-		panel.add(wrapTable("Recent Activity", activityTable, activityStatusLabel), BorderLayout.CENTER);
-		return panel;
-	}
+		private WomHistory.Status status = WomHistory.Status.PENDING;
 
-	private JPanel buildAchievementTab()
-	{
-		// The metric and threshold live in a hidden model column and surface as a tooltip: showing
-		// them as their own columns repeated the milestone the achievement name already states.
-		JTable achievementTable = new WomTable(achievementTableModel, ACHIEVEMENT_DETAIL_COLUMN);
-		achievementTable.setRowSorter(new TableRowSorter<>(achievementTableModel));
-		achievementTable.removeColumn(achievementTable.getColumnModel().getColumn(ACHIEVEMENT_DETAIL_COLUMN));
-		achievementTable.getColumnModel().getColumn(0).setPreferredWidth(115);
-		achievementTable.getColumnModel().getColumn(1).setPreferredWidth(140);
-		achievementTable.getColumnModel().getColumn(2).setPreferredWidth(330);
+		HistoryTab(String noun, DefaultTableModel model, int detailColumn, int[] searchColumns)
+		{
+			this.noun = noun;
+			this.model = model;
+			this.detailColumn = detailColumn;
+			this.searchColumns = searchColumns;
+			this.table = new WomTable(model, detailColumn);
+			this.sorter = new TableRowSorter<>(model);
 
-		JPanel panel = new JPanel(new BorderLayout(0, 0));
-		panel.add(wrapTable("Recent Achievements", achievementTable, achievementStatusLabel), BorderLayout.CENTER);
-		return panel;
-	}
+			table.setRowSorter(sorter);
+			// Newest first, through the sorter so the header shows it. The time column holds
+			// WomInstantCell, so this stays chronological however the dates are rendered.
+			sorter.setSortKeys(Collections.singletonList(new RowSorter.SortKey(TIME_COLUMN, SortOrder.DESCENDING)));
+		}
 
-	private JPanel buildNameChangeTab()
-	{
-		JTable nameChangeTable = createTable(nameChangeTableModel);
-		nameChangeTable.setRowSorter(new TableRowSorter<>(nameChangeTableModel));
-		nameChangeTable.getColumnModel().getColumn(0).setPreferredWidth(115);
-		nameChangeTable.getColumnModel().getColumn(1).setPreferredWidth(140);
-		nameChangeTable.getColumnModel().getColumn(2).setPreferredWidth(140);
-		nameChangeTable.getColumnModel().getColumn(3).setPreferredWidth(140);
-		nameChangeTable.getColumnModel().getColumn(4).setPreferredWidth(90);
+		JPanel build(String title, int... widths)
+		{
+			if (detailColumn >= 0)
+			{
+				table.removeColumn(table.getColumnModel().getColumn(detailColumn));
+			}
+			for (int i = 0; i < widths.length; i++)
+			{
+				table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
+			}
+			table.getColumnModel().getColumn(TIME_COLUMN).setCellRenderer(new RelativeTimeRenderer());
 
-		JPanel panel = new JPanel(new BorderLayout(0, 0));
-		panel.add(wrapTable("Recent Name Changes", nameChangeTable, nameChangeStatusLabel), BorderLayout.CENTER);
-		return panel;
-	}
+			// The heading says the view is a recent slice rather than a complete archive.
+			JLabel titleLabel = new JLabel(title + " (last " + WomApiClient.HISTORY_LIMIT + " fetched)");
+			titleLabel.setFont(FontManager.getRunescapeBoldFont());
+			titleLabel.setBorder(BorderFactory.createEmptyBorder(8, 8, 2, 8));
+			statusLabel.setBorder(BorderFactory.createEmptyBorder(0, 8, 6, 8));
 
-	private JPanel wrapTable(String title, JTable table, JLabel statusLabel)
-	{
-		JLabel label = new JLabel(title);
-		label.setFont(FontManager.getRunescapeBoldFont());
-		label.setBorder(BorderFactory.createEmptyBorder(8, 8, 2, 8));
+			searchField.setFont(FontManager.getRunescapeSmallFont());
+			searchField.setToolTipText("Filter " + noun + " by player name");
+			searchField.getDocument().addDocumentListener(new DocumentListener()
+			{
+				public void insertUpdate(DocumentEvent e) { applyFilter(); }
+				public void removeUpdate(DocumentEvent e) { applyFilter(); }
+				public void changedUpdate(DocumentEvent e) { applyFilter(); }
+			});
 
-		JPanel heading = new JPanel(new BorderLayout(0, 0));
-		heading.add(label, BorderLayout.NORTH);
-		heading.add(statusLabel, BorderLayout.SOUTH);
+			clearButton.setEnabled(false);
+			clearButton.setFocusPainted(false);
+			clearButton.setToolTipText("Clear the search and show all " + noun);
+			clearButton.addActionListener(e -> searchField.setText(""));
 
-		JPanel panel = new JPanel(new BorderLayout(0, 0));
-		panel.add(heading, BorderLayout.NORTH);
-		panel.add(new JScrollPane(table), BorderLayout.CENTER);
-		return panel;
+			JPanel searchRow = new JPanel(new BorderLayout(6, 0));
+			searchRow.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
+			searchRow.add(new JLabel("Search player:"), BorderLayout.WEST);
+			searchRow.add(searchField, BorderLayout.CENTER);
+			searchRow.add(clearButton, BorderLayout.EAST);
+
+			JPanel heading = new JPanel(new BorderLayout(0, 0));
+			heading.add(titleLabel, BorderLayout.NORTH);
+			heading.add(statusLabel, BorderLayout.CENTER);
+			heading.add(searchRow, BorderLayout.SOUTH);
+
+			JPanel panel = new JPanel(new BorderLayout(0, 0));
+			panel.add(heading, BorderLayout.NORTH);
+			panel.add(new JScrollPane(table), BorderLayout.CENTER);
+			return panel;
+		}
+
+		/** Records how the fetch went; the row count comes from the model the caller just filled. */
+		void setHistory(WomHistory<?> history)
+		{
+			status = history.getStatus();
+			statusLabel.setToolTipText(history.getError());
+			updateStatus();
+		}
+
+		private void applyFilter()
+		{
+			String query = searchField.getText().trim();
+			clearButton.setEnabled(!query.isEmpty());
+			sorter.setRowFilter(query.isEmpty()
+				? null
+				: RowFilter.regexFilter("(?i)" + Pattern.quote(query), searchColumns));
+			updateStatus();
+		}
+
+		private void updateStatus()
+		{
+			statusLabel.setText(WomFormat.historyStatus(
+				status, model.getRowCount(), sorter.getViewRowCount(), searchField.getText().trim(), noun));
+		}
 	}
 
 	private JTable createTable(DefaultTableModel tableModel)
@@ -418,17 +453,31 @@ class WomExpandedWindow extends JFrame
 			{
 				return false;
 			}
+
+			@Override
+			public Class<?> getColumnClass(int col)
+			{
+				// Comparable timestamps, so the column sorts by date rather than by rendered text.
+				return col == TIME_COLUMN ? WomInstantCell.class : String.class;
+			}
 		};
 	}
 
 	private DefaultTableModel createActivityTableModel()
 	{
-		return new DefaultTableModel(new String[]{"Time", "Player", "Action", "Role"}, 0)
+		return new DefaultTableModel(new String[]{"When", "Player", "Action", "Role"}, 0)
 		{
 			@Override
 			public boolean isCellEditable(int row, int col)
 			{
 				return false;
+			}
+
+			@Override
+			public Class<?> getColumnClass(int col)
+			{
+				// Comparable timestamps, so the column sorts by date rather than by rendered text.
+				return col == TIME_COLUMN ? WomInstantCell.class : String.class;
 			}
 		};
 	}
@@ -442,12 +491,14 @@ class WomExpandedWindow extends JFrame
 			{
 				return false;
 			}
-		};
-	}
 
-	private String formatInstant(Instant instant)
-	{
-		return instant == null ? "" : DATE_FORMAT.format(instant);
+			@Override
+			public Class<?> getColumnClass(int col)
+			{
+				// Comparable timestamps, so the column sorts by date rather than by rendered text.
+				return col == TIME_COLUMN ? WomInstantCell.class : String.class;
+			}
+		};
 	}
 
 	private String formatActivityType(String type)
@@ -571,20 +622,33 @@ class WomExpandedWindow extends JFrame
 				tooltip.append(cellText);
 			}
 
+			// A relative date is only ever an approximation, so the exact moment is always offered.
+			Object raw = getValueAt(viewRow, viewColumn);
+			if (raw instanceof WomInstantCell)
+			{
+				append(tooltip, WomFormat.exactMoment(((WomInstantCell) raw).getInstant()));
+			}
+
 			if (detailModelColumn >= 0)
 			{
 				Object detail = getModel().getValueAt(convertRowIndexToModel(viewRow), detailModelColumn);
-				if (detail != null && !detail.toString().isEmpty())
-				{
-					if (tooltip.length() > 0)
-					{
-						tooltip.append(" — ");
-					}
-					tooltip.append(detail);
-				}
+				append(tooltip, detail == null ? "" : detail.toString());
 			}
 
 			return tooltip.length() == 0 ? null : tooltip.toString();
+		}
+
+		private static void append(StringBuilder tooltip, String part)
+		{
+			if (part.isEmpty())
+			{
+				return;
+			}
+			if (tooltip.length() > 0)
+			{
+				tooltip.append(" — ");
+			}
+			tooltip.append(part);
 		}
 
 		/** The text as the user sees it, so a formatted number tooltips as the formatted number. */
@@ -620,6 +684,21 @@ class WomExpandedWindow extends JFrame
 		{
 			setText(value instanceof Number
 				? INTEGER_FORMAT.format(((Number) value).longValue())
+				: "");
+		}
+	}
+
+	/**
+	 * Renders a {@link WomInstantCell} as a compact relative date, recomputed at paint time so it
+	 * does not go stale while the window sits open between refreshes.
+	 */
+	private static class RelativeTimeRenderer extends DefaultTableCellRenderer
+	{
+		@Override
+		protected void setValue(Object value)
+		{
+			setText(value instanceof WomInstantCell
+				? WomFormat.relative(((WomInstantCell) value).getInstant(), System.currentTimeMillis())
 				: "");
 		}
 	}
